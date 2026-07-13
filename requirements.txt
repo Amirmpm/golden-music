@@ -1,0 +1,12 @@
+# Golden Music requirements
+# Works with Python 3.14 (also supports 3.11, 3.12, 3.13)
+
+PyQt6==6.11.0
+PyQt6-Qt6==6.11.1
+PyQt6-sip>=13.9
+
+# For reading ID3/FLAC/M4A tags (title, artist, album cover art)
+mutagen>=1.47.0
+
+# For building the .exe (run on Windows)
+pyinstaller>=6.10.0
