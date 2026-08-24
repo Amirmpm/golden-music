@@ -75,7 +75,7 @@ def _extract_cover_bytes(filepath: str) -> bytes:
             return _extract_mp3_bytes(filepath)
         elif ext == ".flac":
             return _extract_flac_bytes(filepath)
-        elif ext in (".ogg", ".oga"):
+        elif ext in (".ogg", ".oga", ".opus"):
             return _extract_ogg_bytes(filepath)
         elif ext in (".m4a", ".mp4", ".alac"):
             return _extract_m4a_bytes(filepath)

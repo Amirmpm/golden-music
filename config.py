@@ -36,7 +36,7 @@ APP_VERSION = "1.0.0"
 ORG_NAME = "GoldenMusic"
 
 # Audio extensions
-AUDIO_EXTS = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".wma"}
+AUDIO_EXTS = {".mp3", ".wav", ".flac", ".ogg", ".oga", ".opus", ".m4a", ".aac", ".wma"}
 
 
 def config_path() -> Path:

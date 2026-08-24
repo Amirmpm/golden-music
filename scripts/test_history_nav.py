@@ -11,10 +11,16 @@ Covers:
   - History navigation survives tracks removed from playlist
 """
 import os, sys, tempfile, traceback
+import random
 from pathlib import Path
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# Deterministic shuffle: same random sequence every run — the assertions
+# retrace history so they hold for ANY sequence, but a fixed seed keeps
+# failures reproducible instead of flaky.
+random.seed(42)
 
 from PyQt6.QtWidgets import QApplication
 app = QApplication(sys.argv)

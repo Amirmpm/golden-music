@@ -22,6 +22,7 @@ if sys.platform == 'win32':
 import json
 import logging
 import random
+import subprocess
 import time
 from pathlib import Path
 from enum import Enum
@@ -63,6 +64,7 @@ from widgets import ClickableSlider
 from tray_menu import TrayMenuWidget
 from theme_picker import ThemePickerPopup
 import coverart
+from mediakeys import MediaKeyFilter
 
 log = logging.getLogger("app")
 
@@ -576,10 +578,11 @@ class SideRail(QFrame):
         self.btn_favorites = self._make_icon_btn(Icon.FAVORITES_NAV, "Favorites", "favorites")
         self.btn_refresh = self._make_icon_btn(Icon.REFRESH, "Refresh Library", "refresh", checkable=False)
         self.btn_add = self._make_icon_btn(Icon.FOLDER_ADD, "Add Folder", "addfolder", checkable=False)
+        self.btn_playlists = self._make_icon_btn(Icon.LIBRARY, "Playlists", "playlists", checkable=False)
         self.btn_mini = self._make_icon_btn(Icon.MINIMIZE, "Mini Player", "mini", checkable=False)
 
         for btn in [self.btn_library, self.btn_favorites, self.btn_refresh,
-                    self.btn_add, self.btn_mini]:
+                    self.btn_add, self.btn_playlists, self.btn_mini]:
             layout.addWidget(btn)
 
         layout.addStretch(1)
@@ -590,7 +593,8 @@ class SideRail(QFrame):
         layout.addWidget(self.btn_settings)
 
         self._all_buttons = [self.btn_library, self.btn_favorites, self.btn_refresh,
-                             self.btn_add, self.btn_mini, self.btn_theme, self.btn_settings]
+                             self.btn_add, self.btn_playlists, self.btn_mini,
+                             self.btn_theme, self.btn_settings]
 
     def _make_icon_btn(self, svg_string, tooltip, key, checked=False, checkable=True):
         """Create a simple IconButton with tooltip."""
@@ -668,6 +672,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(APP_NAME)
         self.resize(1000, 700)
         self.setMinimumSize(860, 620)
+        # Accept folder/file drops from the OS file manager
+        self.setAcceptDrops(True)
         # Publish window title for second-launch focus (single-instance)
         self._publish_title_shm()
 
@@ -677,6 +683,7 @@ class MainWindow(QMainWindow):
         self.library = []
         self.favorites = set()
         self.added_folders = []
+        self.playlists = {}   # {name: [track paths]} — persisted in config
         self.current_view = View.LIBRARY
         self.current_track = None
         self.current_index = -1
@@ -737,6 +744,23 @@ class MainWindow(QMainWindow):
 
         # Keyboard shortcuts
         self._setup_shortcuts()
+
+        # Global media keys (keyboard/headset) — Windows only, best effort
+        self._media_key_filter = None
+        try:
+            app_inst = QApplication.instance()
+            if app_inst is not None and sys.platform == "win32":
+                mk = MediaKeyFilter()
+                if mk.install():
+                    app_inst.installNativeEventFilter(mk)
+                    mk.play_pause.connect(self._on_play_pause)
+                    mk.stop.connect(lambda: (self.audio.stop(),
+                                             self.player_bar.update_play_button(False)))
+                    mk.next.connect(self._on_next)
+                    mk.prev.connect(self._on_prev)
+                    self._media_key_filter = mk
+        except Exception as e:
+            log.warning(f"Media key setup failed: {e}")
 
         # Load config AFTER window is shown (async, non-blocking)
         QTimer.singleShot(50, self._load_config_async)
@@ -843,6 +867,14 @@ class MainWindow(QMainWindow):
         self.play_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.play_all_btn.clicked.connect(self._on_play_all)
         top_row.addWidget(self.play_all_btn)
+
+        # Jump to the track that is currently playing (Ctrl+J)
+        self.jump_btn = QPushButton("♪ Playing")
+        self.jump_btn.setObjectName("GhostBtn")
+        self.jump_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.jump_btn.setToolTip("Scroll to the playing track (Ctrl+J)")
+        self.jump_btn.clicked.connect(self._jump_to_playing)
+        top_row.addWidget(self.jump_btn)
 
         top_row_w = QWidget()
         top_row_w.setLayout(top_row)
@@ -1038,6 +1070,8 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+F"), self, activated=lambda: self.search_edit.setFocus())
         # Ctrl+M: mini player
         QShortcut(QKeySequence("Ctrl+M"), self, activated=self._toggle_mini_player)
+        # Ctrl+J: jump to playing track
+        QShortcut(QKeySequence("Ctrl+J"), self, activated=self._jump_to_playing)
 
     def _change_volume(self, delta):
         v = self.player_bar.vol_slider.value() + delta
@@ -1103,6 +1137,39 @@ class MainWindow(QMainWindow):
         menu.addAction(act_quit)
         self.tray.setContextMenu(menu)
 
+    def _jump_to_playing(self):
+        """Scroll to and select the currently playing track in its list."""
+        if self.current_track is None:
+            QMessageBox.information(self, APP_NAME, "Nothing is playing right now.")
+            return
+        # Switch to the view that contains the track
+        target = self.favorites_list if self.current_track in self.favorites else self.library_list
+        if self.current_view == View.FAVORITES and self.current_track not in self.favorites:
+            # Playing from library while viewing favorites -> jump to library
+            pass
+        lst = None
+        for candidate in (self.library_list, self.favorites_list):
+            for i in range(candidate.count()):
+                if candidate.item(i).data(Qt.ItemDataRole.UserRole) == self.current_track:
+                    lst = candidate
+                    break
+            if lst:
+                break
+        if lst is None:
+            QMessageBox.information(self, APP_NAME,
+                "The playing track is not in the visible lists (it may have been removed).")
+            return
+        if lst is self.library_list and self.current_view != View.LIBRARY:
+            self._on_rail_clicked("library")
+        elif lst is self.favorites_list and self.current_view != View.FAVORITES:
+            self._on_rail_clicked("favorites")
+        for i in range(lst.count()):
+            it = lst.item(i)
+            if it.data(Qt.ItemDataRole.UserRole) == self.current_track:
+                lst.setCurrentRow(i)
+                lst.scrollToItem(it, QListWidget.ScrollHint.PositionAtCenter)
+                break
+
     def _on_rail_clicked(self, key: str):
         if key == "library":
             self.current_view = View.LIBRARY
@@ -1124,8 +1191,22 @@ class MainWindow(QMainWindow):
             self._show_theme_picker()
         elif key == "settings":
             self._show_settings()
+        elif key == "playlists":
+            self._show_playlists()
         elif key == "mini":
             self._toggle_mini_player()
+
+    def _show_playlists(self):
+        try:
+            from playlist_dialog import PlaylistDialog
+            dlg = PlaylistDialog(self, self)
+            dlg.exec()
+        except Exception as e:
+            log.error(f"Playlist dialog failed: {e}")
+
+    def sort_playlists_names(self):
+        """Playlist names sorted case-insensitively (used by the dialog)."""
+        return sorted(self.playlists.keys(), key=str.lower)
 
     def _show_theme_picker(self):
         """Show the theme picker popup near the theme button."""
@@ -1453,7 +1534,8 @@ class MainWindow(QMainWindow):
         add_item.setForeground(0, QColor(self.theme["gold_light"]))
         self.folder_tree.addTopLevelItem(add_item)
 
-        # User-added folders with subfolders
+        # User-added folders with ALL nested subfolders (recursive, no cap —
+        # the scanner already walks recursively so the tree must match it).
         for folder_path in self.added_folders:
             if not os.path.isdir(folder_path):
                 continue
@@ -1463,23 +1545,30 @@ class MainWindow(QMainWindow):
             root_item.setData(0, Qt.ItemDataRole.UserRole, folder_path)
             root_item.setToolTip(0, folder_path)
             self.folder_tree.addTopLevelItem(root_item)
-
-            # Add immediate subfolders
-            try:
-                subdirs = sorted([d for d in os.listdir(folder_path)
-                                  if os.path.isdir(os.path.join(folder_path, d))])
-                for sub in subdirs[:20]:  # limit to 20 subfolders
-                    sub_path = os.path.join(folder_path, sub)
-                    sub_item = QTreeWidgetItem([sub])
-                    sub_item.setIcon(0, folder_icon)
-                    sub_item.setData(0, Qt.ItemDataRole.UserRole, sub_path)
-                    sub_item.setToolTip(0, sub_path)
-                    root_item.addChild(sub_item)
-            except Exception:
-                pass
+            self._add_subtree(root_item, folder_path, folder_icon)
 
         # Expand all
         self.folder_tree.expandAll()
+
+    def _add_subtree(self, parent_item, dir_path, folder_icon, depth=0):
+        """Recursively attach every subdirectory of dir_path (max depth 12 as
+        a cycle/loop guard for pathological filesystems)."""
+        if depth > 12:
+            return
+        try:
+            subdirs = sorted([d for d in os.listdir(dir_path)
+                              if os.path.isdir(os.path.join(dir_path, d))
+                              and not d.startswith(".")])
+        except OSError:
+            return
+        for sub in subdirs:
+            sub_path = os.path.join(dir_path, sub)
+            sub_item = QTreeWidgetItem([sub])
+            sub_item.setIcon(0, folder_icon)
+            sub_item.setData(0, Qt.ItemDataRole.UserRole, sub_path)
+            sub_item.setToolTip(0, sub_path)
+            parent_item.addChild(sub_item)
+            self._add_subtree(sub_item, sub_path, folder_icon, depth + 1)
 
     def _bold_font(self):
         f = self.font()
@@ -1586,11 +1675,58 @@ class MainWindow(QMainWindow):
         act_remove.setIcon(QIcon(render_icon(Icon.TRASH, 16, "#e05050", dpr)))
         act_remove.triggered.connect(lambda: self._remove_from_library(path))
         menu.addAction(act_remove)
+        menu.addSeparator()
+        act_add_pl = QAction("Add to Playlist...", self)
+        act_add_pl.setIcon(QIcon(render_icon(Icon.LIBRARY, 16, t["gold"], dpr)))
+        act_add_pl.triggered.connect(
+            lambda: self._add_to_playlist(path))
+        menu.addAction(act_add_pl)
+        menu.addSeparator()
+        act_open_loc = QAction("Open File Location", self)
+        act_open_loc.setIcon(QIcon(render_icon(Icon.FOLDER, 16, t["gold"], dpr)))
+        act_open_loc.triggered.connect(lambda: self._open_file_location(path))
+        menu.addAction(act_open_loc)
+        act_props = QAction("Properties", self)
+        act_props.setIcon(QIcon(render_icon(Icon.SETTINGS, 16, t["muted"], dpr)))
+        act_props.triggered.connect(lambda: self._show_track_properties(path))
+        menu.addAction(act_props)
         # Use cached tags for display if available
         if path in self._tag_cache:
             title, artist = self._tag_cache[path]
             menu.setWindowTitle(f"{title} — {artist}")
         menu.exec(lst.mapToGlobal(pos))
+
+    def _add_to_playlist(self, path):
+        """Right-click helper — delegate to the playlist picker dialog."""
+        try:
+            from playlist_dialog import add_track_to_playlist_dialog
+            add_track_to_playlist_dialog(self, path)
+        except Exception as e:
+            log.error(f"Add-to-playlist failed: {e}")
+
+    def _open_file_location(self, path):
+        """Reveal the track's file in the OS file manager."""
+        try:
+            if sys.platform == "win32":
+                subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", "-R", path])
+            else:
+                subprocess.Popen(["xdg-open", os.path.dirname(path)])
+        except Exception as e:
+            log.warning(f"Open file location failed: {e}")
+
+    def _show_track_properties(self, path):
+        """Show the technical properties dialog for a track."""
+        try:
+            from trackinfo import get_track_info
+            from track_info_dialog import TrackInfoDialog
+            info = get_track_info(path)
+            dlg = TrackInfoDialog(info, self.theme, self)
+            dlg.exec()
+        except Exception as e:
+            log.error(f"Track properties failed: {e}")
+            QMessageBox.warning(self, APP_NAME, f"Could not read file info:\n{e}")
 
     def _play_track_from_list(self, path):
         lst = self.library_list if self.current_view == View.LIBRARY else self.favorites_list
@@ -2103,6 +2239,56 @@ class MainWindow(QMainWindow):
             self.raise_()
             self.activateWindow()
 
+    # ------------------------------------------------------------------
+    # Drag & drop from the OS file manager
+    # ------------------------------------------------------------------
+    _DROP_MAX_FILES = 5000  # sanity cap per drop event
+
+    def dragEnterEvent(self, e):
+        """Accept drops that contain at least one local dir/audio file."""
+        md = e.mimeData()
+        if not md.hasUrls():
+            return
+        for url in md.urls()[:self._DROP_MAX_FILES]:
+            if not url.isLocalFile():
+                continue
+            p = Path(url.toLocalFile())
+            if p.is_dir() or p.suffix.lower() in AUDIO_EXTS:
+                e.acceptProposedAction()
+                return
+
+    def dropEvent(self, e):
+        md = e.mimeData()
+        folders, files = [], []
+        for url in md.urls()[:self._DROP_MAX_FILES]:
+            if not url.isLocalFile():
+                continue
+            p = Path(url.toLocalFile())
+            if p.is_dir():
+                folders.append(str(p))
+            elif p.suffix.lower() in AUDIO_EXTS and p.exists():
+                files.append(str(p))
+        if not folders and not files:
+            return
+        # Add folders to scan list (dedup against existing)
+        new_folders = [f for f in folders if f not in self.added_folders]
+        self.added_folders.extend(new_folders)
+        # Direct file drops join the library immediately
+        existing = set(self.library)
+        added_files = [f for f in files if f not in existing]
+        self.library.extend(added_files)
+        if new_folders:
+            self._start_scan(new_folders, label="Scanning dropped folder...")
+        else:
+            # No folder scan pending — refresh lists directly
+            self.library.sort(key=lambda x: os.path.basename(x).lower())
+            self._rebuild_library_list()
+            self._update_count_label()
+            self._save_config()
+        if added_files or new_folders:
+            n = len(added_files) + len(new_folders)
+            log.info(f"Drop: +{len(added_files)} files, +{len(new_folders)} folders")
+
     def closeEvent(self, e):
         if self._force_quit:
             self._save_config()
@@ -2143,6 +2329,8 @@ class MainWindow(QMainWindow):
             "library": self.library,
             "favorites": sorted(self.favorites),
             "added_folders": self.added_folders,
+            "playlists": {name: paths for name, paths in self.playlists.items()
+                          if isinstance(name, str) and isinstance(paths, list)},
             "volume": self.player_bar.vol_slider.value() if hasattr(self, "player_bar") else 80,
             "last_track": self.current_track if self.remember_track else None,
             "last_position": self.audio.position() if self.remember_track and self.audio.available else 0,
@@ -2175,6 +2363,13 @@ class MainWindow(QMainWindow):
         self.library = cfg.get("library", [])
         self.favorites = set(cfg.get("favorites", []))
         self.added_folders = cfg.get("added_folders", [])
+        raw_pl = cfg.get("playlists", {})
+        if isinstance(raw_pl, dict):
+            self.playlists = {str(k): [p for p in v if isinstance(p, str)]
+                              for k, v in raw_pl.items()
+                              if isinstance(k, str) and isinstance(v, list)}
+        else:
+            self.playlists = {}
         vol = cfg.get("volume", 80)
         self._last_volume = vol
         if hasattr(self, "player_bar"):
@@ -2265,6 +2460,13 @@ class MainWindow(QMainWindow):
         self.library = cfg.get("library", [])
         self.favorites = set(cfg.get("favorites", []))
         self.added_folders = cfg.get("added_folders", [])
+        raw_pl = cfg.get("playlists", {})
+        if isinstance(raw_pl, dict):
+            self.playlists = {str(k): [p for p in v if isinstance(p, str)]
+                              for k, v in raw_pl.items()
+                              if isinstance(k, str) and isinstance(v, list)}
+        else:
+            self.playlists = {}
         vol = cfg.get("volume", 80)
         self._last_volume = vol
         self.player_bar.vol_slider.setValue(vol)

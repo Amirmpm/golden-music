@@ -197,6 +197,14 @@ class SettingsDialog(QDialog):
         rescan_layout.addWidget(self.remember_track_cb)
         layout.addWidget(rescan_group)
 
+        # Library tools
+        tools_group = QGroupBox("Library Tools")
+        tools_layout = QVBoxLayout(tools_group)
+        dup_btn = QPushButton("Find Duplicate Tracks...")
+        dup_btn.clicked.connect(self._find_duplicates)
+        tools_layout.addWidget(dup_btn)
+        layout.addWidget(tools_group)
+
         # Data management
         data_group = QGroupBox("Data Management")
         data_layout = QVBoxLayout(data_group)
@@ -320,6 +328,15 @@ class SettingsDialog(QDialog):
         import coverart
         coverart.clear_cache()
         QMessageBox.information(self, APP_NAME, "Cover art cache cleared.")
+
+    def _find_duplicates(self):
+        try:
+            from duplicates_dialog import DuplicatesDialog
+            self.accept()  # close settings so the browser is front and center
+            dlg = DuplicatesDialog(self.main_window, self.main_window)
+            dlg.exec()
+        except Exception as e:
+            QMessageBox.warning(self, APP_NAME, f"Duplicate finder failed:\n{e}")
 
     def _on_ok(self):
         # Apply appearance
