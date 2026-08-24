@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.0] - 2026-08-24
+
+### 🎉 Feature & Quality Release
+
+A major upgrade focused on completing the player, hardening it, and shipping a compact installer.
+
+### ✨ Added
+
+#### New Features
+- **Personal playlists** — create/rename/delete from the sidebar; add tracks via right-click; stored in config
+- **Duplicate finder** (Settings → Library Tools) — groups same-song copies by normalized tags or filename + duration; keep one copy per group, remove the rest from the library (disk files untouched)
+- **Track properties** dialog — format, duration, bitrate, sample rate, size, album, year
+- **Open File Location** — reveal a track's file in Explorer from its context menu
+- **Drag & drop** — drop folders or audio files from Explorer to add them
+- **Global media keys** — Play/Pause/Stop/Next/Prev from keyboard/headset
+- **Jump to Playing** (`Ctrl+J`) — scroll lists to the current track
+- **New formats** — `.opus` and `.oga` supported end-to-end
+- **Full folder tree** — all nesting depths shown (was: one level, max 20)
+
+#### Playback Correctness
+- **History-aware shuffle** — Previous retraces what actually played; Next replays forward after going back
+- Playlist index integrity when removing tracks during playback
+
+#### Reliability
+- **Single-instance** — second launch focuses the running window (no error)
+- **Crash guard** — unhandled exceptions are logged; the app survives
+- **Rotating file log** (`~/.goldenmusic/goldenmusic.log`) incl. Qt warnings
+
+### 🔧 Changed
+- Optimized release build (~80 MB): unused Qt modules/DLLs excluded, UPX-packed with safe exclusions
+- Assets slimmed 1.1 MB → 158 KB; logo/icon recompressed losslessly-in-practice
+- Installer now detects previous installations and updates in place, preserving user data
+
+### 🗑️ Removed
+- Fake "Crossfade" option (no implementation existed)
+- Dead "Hover to expand sidebar" setting (sidebar is collapsed by design)
+
+### 🔒 Security
+- Validated JSON config/tag-cache loading (size caps, shape checks)
+- Cover-art memory guards against decompression bombs
+- Path-boundary-safe folder filtering; owner-only perms on data files (POSIX)
+- Bandit: 0 High / 0 Medium findings
+
+### 🧪 Testing
+- 7 offline test suites, 106 tests total (functional, deep, stability ×2,
+  history-nav, features, crash)
+
+---
+
 ## [1.0.0] - 2026-07-14
 
 ### 🎉 First Public Release

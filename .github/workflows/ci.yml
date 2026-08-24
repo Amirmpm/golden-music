@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pywin32
+
+      - name: Security scan (Bandit)
+        run: |
+          pip install bandit
+          bandit -r . -q --exclude "./.git,./build,./dist,./screenshots,./scripts,./assets" --severity-level medium
+
+      - name: Run test suites (offscreen Qt)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          foreach ($t in @('test_functional','test_deep','test_stability','test_stability_v2','test_history_nav','test_features','test_crash')) {
+            Write-Host "::group::=== $t ==="
+            python "scripts/$t.py"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Write-Host "::endgroup::"
+          }
+
+  build:
+    needs: test
+    runs-on: windows-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pywin32
+
+      - name: Build exe (PyInstaller + trim)
+        run: python build_release.py
+
+      - name: Build installer (Inno Setup)
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2
+        with:
+          path: goldenmusic.iss
+
+      - name: Upload portable folder
+        uses: actions/upload-artifact@v4
+        with:
+          name: GoldenMusic-portable
+          path: dist/GoldenMusic/
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: GoldenMusicSetup
+          path: dist/installer/*.exe

@@ -125,13 +125,6 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(theme_group)
 
-        # Sidebar group
-        sidebar_group = QGroupBox("Sidebar")
-        sidebar_layout = QVBoxLayout(sidebar_group)
-        self.hover_expand_cb = QCheckBox("Hover to expand sidebar (collapse when not hovering)")
-        sidebar_layout.addWidget(self.hover_expand_cb)
-        layout.addWidget(sidebar_group)
-
         layout.addStretch(1)
         return tab
 
@@ -275,7 +268,6 @@ class SettingsDialog(QDialog):
         if idx >= 0:
             self.theme_combo.setCurrentIndex(idx)
         self._update_theme_preview()
-        self.hover_expand_cb.setChecked(getattr(self.main_window, 'hover_expand', True))
 
         # Playback
         self.default_vol_spin.setValue(getattr(self.main_window, '_last_volume', 80))
@@ -344,7 +336,6 @@ class SettingsDialog(QDialog):
         if new_theme != self.main_window.theme_name:
             self.main_window.theme_name = new_theme
             self.main_window._apply_theme()
-        self.main_window.hover_expand = self.hover_expand_cb.isChecked()
 
         # Apply playback
         self.main_window._last_volume = self.default_vol_spin.value()

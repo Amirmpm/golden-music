@@ -702,7 +702,6 @@ class MainWindow(QMainWindow):
         self.search_filter = ""
 
         # Settings
-        self.hover_expand = True
         self.auto_rescan = True
         self.remember_track = True
         self.default_folder = ""
@@ -804,7 +803,6 @@ class MainWindow(QMainWindow):
         top.setSpacing(0)
 
         self.rail = SideRail(self.theme)
-        self.rail.hover_expand = self.hover_expand
         self.rail.rail_clicked.connect(self._on_rail_clicked)
         top.addWidget(self.rail)
 
@@ -2337,7 +2335,6 @@ class MainWindow(QMainWindow):
             "shuffle": self.shuffle,
             "repeat_mode": self.repeat_mode.value,
             "geometry": self.saveGeometry().data().hex() if self.isVisible() else None,
-            "hover_expand": self.hover_expand,
             "auto_rescan": self.auto_rescan,
             "remember_track": self.remember_track,
             "default_folder": self.default_folder,
@@ -2379,7 +2376,6 @@ class MainWindow(QMainWindow):
         rm = cfg.get("repeat_mode", 0)
         self.repeat_mode = RepeatMode(rm)
         self.player_bar.update_repeat_button(self.repeat_mode)
-        self.hover_expand = cfg.get("hover_expand", True)
         self.auto_rescan = cfg.get("auto_rescan", True)
         self.remember_track = cfg.get("remember_track", True)
         self.default_folder = cfg.get("default_folder", "")
@@ -2398,8 +2394,6 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         self._apply_theme()
-        if hasattr(self, "rail"):
-            self.rail.hover_expand = self.hover_expand
         self.library = [p for p in self.library if os.path.exists(p)]
         self.favorites = {p for p in self.favorites if os.path.exists(p)}
         self._rebuild_library_list()
@@ -2475,7 +2469,6 @@ class MainWindow(QMainWindow):
         rm = cfg.get("repeat_mode", 0)
         self.repeat_mode = RepeatMode(rm)
         self.player_bar.update_repeat_button(self.repeat_mode)
-        self.hover_expand = cfg.get("hover_expand", True)
         self.auto_rescan = cfg.get("auto_rescan", True)
         self.remember_track = cfg.get("remember_track", True)
         self.default_folder = cfg.get("default_folder", "")
@@ -2491,9 +2484,6 @@ class MainWindow(QMainWindow):
                 self.restoreGeometry(bytes.fromhex(geom_hex))
             except Exception:
                 pass
-        if hasattr(self, "rail"):
-            self.rail.hover_expand = self.hover_expand
-
         self._apply_theme()
 
         # Filter missing files (fast — os.path.exists)

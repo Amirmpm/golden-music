@@ -14,7 +14,7 @@
 ![PyQt6](https://img.shields.io/badge/PyQt6-6.11+-41CD52?style=for-the-badge&logo=qt&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)
-![Version](https://img.shields.io/badge/Version-1.0.0-brightgreen?style=for-the-badge)
+![Version](https://img.shields.io/badge/Version-1.1.0-brightgreen?style=for-the-badge)
 ![Stars](https://img.shields.io/github/stars/Amirmpm/golden-music?style=for-the-badge)
 
 </div>
@@ -54,22 +54,35 @@
 - **System tray integration** — Minimize to tray, quick controls
 
 ### 🎵 Powerful Playback
-- **All popular formats** — MP3, WAV, FLAC, OGG, M4A, AAC, WMA
-- **Windows Media Foundation** backend for superior audio quality
+- **All popular formats** — MP3, WAV, FLAC, OGG, OGA, Opus, M4A, AAC, WMA
+- **Windows Media Foundation / FFmpeg** backends for superior audio quality
 - **Click-to-seek** progress bar — Jump anywhere instantly
-- **Smooth volume control** — Click or drag
+- **Smooth volume control** — Click or drag, with mute memory
 - **Shuffle & Repeat** — Off / All / One modes
+- **History-aware shuffle** — Previous retraces the actual listening path; Next replays forward after going back
+- **Global media keys** — Play/Pause/Stop/Next/Prev from keyboard or headset
 - **Album cover art** — Extracted automatically from file metadata
 
 ### 📚 Smart Library Management
 - **Add folders** with recursive subfolder scanning
-- **Folder tree** navigation in the sidebar
+- **Full folder tree** — Every nesting level shown and filterable
+- **Personal playlists** — Create, rename, delete; add tracks via right-click
+- **Duplicate finder** — Groups same-song copies; keep one, remove the rest (files on disk untouched)
 - **Instant search** — Filter by title or artist
 - **Sort by** Title, Artist, Date Added, or Filename
-- **Right-click context menu** — Play, Add/Remove Favorites, Remove from Library
+- **Jump to Playing** (`Ctrl+J`) — Scroll the list to the current track
+- **Drag & drop** — Drop folders or audio files from Explorer to add them
+- **Track properties** — Format, duration, bitrate, sample rate, size + "Open File Location"
+- **Right-click context menu** — Play, Favorites, Playlists, Remove, Properties
 - **Refresh button** — Rescan folders for new or removed tracks
 - **Auto-rescan** on startup (configurable)
 - **Tag caching** — Instant loading on subsequent launches
+
+### 🛡️ Reliability
+- **Single-instance** — Launching again focuses the running window instead of erroring
+- **Crash guard** — Unexpected exceptions are logged, the app keeps running
+- **Rotating file log** — Diagnostics written next to the config (`~/.goldenmusic/goldenmusic.log`)
+- **Validated config loading** — Corrupted settings files never crash startup
 
 ### ⚡ Performance & Stability
 - **Async everything** — No UI freeze, even with 2000+ songs
@@ -99,6 +112,9 @@
 | `Ctrl + ↓` | Volume Down |
 | `Ctrl + F` | Focus search bar |
 | `Ctrl + M` | Toggle Mini Player |
+| `Ctrl + J` | Jump to the playing track |
+
+*Media keys (Play/Pause/Stop/Next/Prev) on your keyboard or headset work globally.*
 
 ---
 
@@ -107,8 +123,8 @@
 ### Option 1: Download Installer (Recommended)
 
 1. Go to [Releases](../../releases)
-2. Download `GoldenMusicSetup-1.0.0.exe`
-3. Run the installer
+2. Download `GoldenMusicSetup-1.1.0.exe`
+3. Run the installer — it detects an existing installation and updates in place; your library, favorites and settings are preserved
 4. Enjoy your music! 🎉
 
 ### Option 2: Run from Source
@@ -118,27 +134,30 @@
 git clone https://github.com/Amirmpm/golden-music.git
 cd golden-music
 
-# Install dependencies
-pip install -r requirements.txt
+# Install dependencies (pywin32 adds media keys + single-instance on Windows)
+pip install -r requirements.txt pywin32
 
 # Run
 python main.py
 ```
 
-### Option 3: Build the Installer Yourself
+### Option 3: Build the Portable exe / Installer Yourself
 
 **Prerequisites:**
-- [Python 3.14+](https://www.python.org/downloads/)
-- [Inno Setup 6](https://jrsoftware.org/isdl.php)
+- [Python 3.12+](https://www.python.org/downloads/)
+- [Inno Setup 6](https://jrsoftware.org/isdl.php) (installer only)
 
 ```bash
-# Build the executable and installer
+# Optimized portable build only (~80 MB, trims unused Qt DLLs, UPX-packed)
+python build_release.py
+
+# Full pipeline: tests -> exe -> installer
 build_windows.bat
 ```
 
 Output:
-- `dist\GoldenMusic\GoldenMusic.exe` — The app
-- `dist\installer\GoldenMusicSetup-1.0.0.exe` — The installer
+- `dist\GoldenMusic\GoldenMusic.exe` — The app (portable folder)
+- `dist\installer\GoldenMusicSetup-1.1.0.exe` — The installer
 
 ---
 
@@ -147,7 +166,14 @@ Output:
 ```
 golden-music/
 ├── main.py                  # Main application window
-├── config.py                # Themes, QSS stylesheets, helpers
+├── config.py                # Themes, QSS stylesheets, safe loaders
+├── applog.py                # Rotating file logging + Qt message hook
+├── mediakeys.py             # Global Windows media key hotkeys
+├── trackinfo.py             # Track technical metadata reader
+├── track_info_dialog.py     # Properties dialog + Open File Location
+├── playlist_dialog.py       # Personal playlists UI + store
+├── duplicates.py            # Duplicate grouping engine
+├── duplicates_dialog.py     # Duplicates review/cleanup dialog
 ├── icons.py                 # SVG icon library (30+ icons)
 ├── audio.py                 # PyQt6 QMediaPlayer audio backend
 ├── scanner.py               # Async folder scanner (QThread)
@@ -157,10 +183,13 @@ golden-music/
 ├── theme_picker.py          # Theme swatch picker popup
 ├── settings_dialog.py       # Settings dialog (4 tabs)
 ├── mini_player.py           # Compact floating player
+├── scripts/                 # 7 offline test suites (106 tests)
 ├── requirements.txt         # Python dependencies
-├── goldenmusic.spec         # PyInstaller spec file
+├── goldenmusic.spec         # PyInstaller spec (optimized)
 ├── goldenmusic.iss          # Inno Setup installer script
-├── build_windows.bat        # One-click build script
+├── build_release.py         # Optimized exe build + trim + size report
+├── build_windows.bat        # One-click: tests -> exe -> installer
+├── .github/workflows/       # CI: tests + Bandit + build artifacts
 ├── assets/                  # Icons, logos, images
 │   ├── logo.png             # Custom app logo
 │   ├── icon.png             # App icon (512x512)
