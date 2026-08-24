@@ -89,3 +89,6 @@ secrets.json
 _orig_backup/
 *.log
 instance.lock
+
+# Release build output
+build_release_output/
