@@ -133,7 +133,10 @@ def prev_far_restarts():
 check("prev_after_3s_restarts", prev_far_restarts)
 
 def prev_near_goes_back():
+    # Sync index AND history (history records every real track start)
     w.current_index = 5
+    w.play_history.clear(); w.redo_stack.clear()
+    w._load_and_play_current()
     w.audio._p = 500  # <3s — go back one
     w._on_prev()
     assert w.current_index == 4

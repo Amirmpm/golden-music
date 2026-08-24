@@ -681,6 +681,13 @@ class MainWindow(QMainWindow):
         self.current_track = None
         self.current_index = -1
         self.current_playlist = []
+        # Playback history for shuffle-correct Previous/Next navigation.
+        # history holds tracks in the order they STARTED playing; redo holds
+        # tracks "taken back" with Previous so Next can replay them forward.
+        # Both store paths (not indexes) so library edits can't corrupt them.
+        self.play_history = []    # [..., previous_track]
+        self.redo_stack = []      # [next_track_after_redo, ...]
+        self._nav_via_history = False  # True while stepping back through history
         self.shuffle = False
         self.repeat_mode = RepeatMode.OFF
         self.user_is_seeking = False
@@ -1611,6 +1618,16 @@ class MainWindow(QMainWindow):
         if path in self.library:
             self.library.remove(path)
         self.favorites.discard(path)
+        # Keep history consistent — a removed track must not come back via
+        # Previous/Next history navigation
+        try:
+            self.play_history.remove(path)
+        except ValueError:
+            pass
+        try:
+            self.redo_stack.remove(path)
+        except ValueError:
+            pass
         if path != self.current_track:
             # Removing a non-playing track: drop it from the playlist and keep
             # current_index pointing at the SAME playing track.
@@ -1684,12 +1701,35 @@ class MainWindow(QMainWindow):
         self.current_index = index
         self.shuffle = shuffled
         self.player_bar.update_shuffle_button(shuffled)
+        # New listening session — old history belongs to the previous queue
+        # unless we're already inside it (double-click during history nav).
+        if not self._nav_via_history:
+            self.play_history.clear()
+            self.redo_stack.clear()
         self._load_and_play_current()
+
+    _HISTORY_MAX = 200  # bound memory; deep enough for any listening session
+
+    def _push_history(self, path):
+        """Record a track start in history, clearing the redo branch —
+        same semantics as browser back/forward.
+
+        Skipped entirely while navigating via history (_nav_via_history):
+        _on_prev/_on_next already maintain history/redo themselves."""
+        if not path or self._nav_via_history:
+            return
+        # Avoid consecutive duplicates (repeat-one restarts, seeks)
+        if self.play_history and self.play_history[-1] == path:
+            return
+        self.play_history.append(path)
+        del self.play_history[:-self._HISTORY_MAX]
+        self.redo_stack.clear()
 
     def _load_and_play_current(self):
         if not self.current_playlist or self.current_index < 0:
             return
         path = self.current_playlist[self.current_index]
+        self._push_history(path)
         self.current_track = path
         # Use cached tags if available, otherwise extract (just for current track)
         if path in self._tag_cache:
@@ -1778,6 +1818,30 @@ class MainWindow(QMainWindow):
             self.audio.set_volume(self.player_bar.vol_slider.value())
             self.audio.load_and_play(self.current_track)
 
+    def _play_path_from_playlist(self, path):
+        """Play `path` via the playlist when present, or directly (history
+        entry may have been removed from the current list)."""
+        try:
+            idx = self.current_playlist.index(path)
+        except ValueError:
+            # Track no longer in the active playlist — play it standalone so
+            # history navigation never dies after library edits
+            self.current_track = path
+            title, artist = extract_title_artist(path)
+            if path in self._tag_cache:
+                title, artist = self._tag_cache[path]
+            self.now_title.setText(title)
+            self.now_artist.setText(artist)
+            self.player_bar.title_label.setText(title)
+            self.player_bar.artist_label.setText(artist)
+            self._load_cover_async(path)
+            self._push_history(path)
+            self.audio.set_volume(self.player_bar.vol_slider.value())
+            self.audio.load_and_play(path)
+            return
+        self.current_index = idx
+        self._load_and_play_current()
+
     def _on_next(self):
         if not self.current_playlist:
             return
@@ -1785,7 +1849,19 @@ class MainWindow(QMainWindow):
             self.audio.set_position(0)
             self.audio.play()
             return
+        # Forward through history first (redo branch) — applies to shuffle too
+        if self.redo_stack:
+            nxt = self.redo_stack.pop()
+            self.play_history.append(nxt)
+            del self.play_history[:-self._HISTORY_MAX]
+            self._nav_via_history = True
+            try:
+                self._play_path_from_playlist(nxt)
+            finally:
+                self._nav_via_history = False
+            return
         if self.shuffle:
+            # Fresh random jump — only when there is nothing to redo
             if len(self.current_playlist) > 1:
                 idx = self.current_index
                 while idx == self.current_index:
@@ -1812,6 +1888,23 @@ class MainWindow(QMainWindow):
         if pos > 3000:
             self.audio.set_position(0)
             return
+        # History-aware Previous: in shuffle mode this must go back to the
+        # track that ACTUALLY played before, not pick a new random one.
+        if len(self.play_history) >= 2:
+            cur = self.play_history[-1]
+            prev_path = self.play_history[-2]
+            if prev_path == cur:
+                # Defensive: deduped history should not contain adjacent dupes
+                return
+            self.play_history.pop()
+            self.redo_stack.append(cur)
+            self._nav_via_history = True
+            try:
+                self._play_path_from_playlist(prev_path)
+            finally:
+                self._nav_via_history = False
+            return
+        # No usable history — fall back to sequential behavior
         if self.shuffle:
             if len(self.current_playlist) > 1:
                 idx = self.current_index

@@ -112,7 +112,14 @@ def prev_far():
 check("prev_restarts_far", prev_far)
 
 def prev_near():
-    w.audio._p = 1000; w.current_index = 3; w._on_prev()
+    # Sync playback state fully: index AND history must agree, as they do
+    # in real usage where every track start is recorded in history.
+    w.audio._p = 1000
+    w.current_index = 3
+    w.play_history.clear(); w.redo_stack.clear()
+    w._load_and_play_current()
+    w.audio._p = 1000
+    w._on_prev()
     assert w.current_index == 2
 check("prev_back_near", prev_near)
 
