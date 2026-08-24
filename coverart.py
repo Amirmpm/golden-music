@@ -3,19 +3,29 @@ Golden Music — Album art extraction (thread-safe).
 Returns raw bytes (not QPixmap) for safe cross-thread transfer.
 """
 import io
+import logging
 from pathlib import Path
 
 from PyQt6.QtGui import QPixmap, QImage
 from PyQt6.QtCore import QByteArray, Qt
 
+log = logging.getLogger("app.coverart")
+
 _cover_cache = {}
 _CACHE_MAX = 200
+# Embedded cover art is typically <1 MiB; anything far larger is either a
+# bloated file or a maliciously crafted one — skip it to protect memory.
+COVER_MAX_BYTES = 8 * 1024 * 1024  # 8 MiB
+DECODED_IMAGE_MAX_BYTES = 64 * 1024 * 1024  # cap decoded-pixel memory per image
 
 
 def get_cover_bytes(filepath: str) -> bytes:
     if filepath in _cover_cache:
         return _cover_cache[filepath]
     data = _extract_cover_bytes(filepath)
+    if data is not None and len(data) > COVER_MAX_BYTES:
+        log.warning(f"Cover art too large ({len(data)} bytes), skipping: {filepath}")
+        return None
     _cache_put(filepath, data)
     return data
 
@@ -35,13 +45,18 @@ def get_cover_pixmap(filepath: str, size: int = 0) -> QPixmap:
 
 
 def bytes_to_pixmap(data: bytes) -> QPixmap:
-    if not data:
+    if not data or len(data) > COVER_MAX_BYTES:
         return QPixmap()
-    ba = QByteArray(data)
-    pm = QPixmap()
-    if not pm.loadFromData(ba):
+    # Reject decompression bombs: a few MB of compressed data can decode to
+    # gigabytes of pixels. Cap total decoded pixel memory.
+    img = QImage.fromData(QByteArray(data))
+    if img.isNull():
         return QPixmap()
-    return pm
+    if img.width() * img.height() * 4 > DECODED_IMAGE_MAX_BYTES:
+        log.warning("Cover image too large to decode "
+                        f"({img.width()}x{img.height()}), skipping.")
+        return QPixmap()
+    return QPixmap.fromImage(img)
 
 
 def _cache_put(filepath: str, data):

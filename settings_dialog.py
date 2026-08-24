@@ -13,6 +13,7 @@ from PyQt6.QtGui import QPixmap
 
 from config import Theme, APP_NAME, APP_VERSION
 from icons import render_icon, get_dpr
+import icons
 
 
 class SettingsDialog(QDialog):
@@ -166,13 +167,6 @@ class SettingsDialog(QDialog):
         self.sleep_cb.toggled.connect(self.sleep_spin.setEnabled)
         layout.addWidget(sleep_group)
 
-        # Crossfade group
-        crossfade_group = QGroupBox("Crossfade")
-        crossfade_layout = QVBoxLayout(crossfade_group)
-        self.crossfade_cb = QCheckBox("Enable crossfade between tracks (experimental)")
-        crossfade_layout.addWidget(self.crossfade_cb)
-        layout.addWidget(crossfade_group)
-
         layout.addStretch(1)
         return tab
 
@@ -231,7 +225,7 @@ class SettingsDialog(QDialog):
 
         # App icon
         dpr = get_dpr()
-        icon_pm = render_icon(__import__('icons').Icon.MUSIC_NOTE, 64, self.theme["gold"], dpr)
+        icon_pm = render_icon(icons.Icon.MUSIC_NOTE, 64, self.theme["gold"], dpr)
         icon_label = QLabel()
         icon_label.setPixmap(icon_pm)
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -280,7 +274,6 @@ class SettingsDialog(QDialog):
         self.sleep_cb.setChecked(getattr(self.main_window, 'sleep_timer_active', False))
         self.sleep_spin.setValue(getattr(self.main_window, 'sleep_timer_minutes', 30))
         self.sleep_spin.setEnabled(self.sleep_cb.isChecked())
-        self.crossfade_cb.setChecked(getattr(self.main_window, 'crossfade_enabled', False))
 
         # Library
         self.folder_edit.setText(getattr(self.main_window, 'default_folder', ''))
@@ -342,7 +335,6 @@ class SettingsDialog(QDialog):
             self.main_window.start_sleep_timer(self.sleep_spin.value())
         else:
             self.main_window.stop_sleep_timer()
-        self.main_window.crossfade_enabled = self.crossfade_cb.isChecked()
 
         # Apply library
         self.main_window.default_folder = self.folder_edit.text()

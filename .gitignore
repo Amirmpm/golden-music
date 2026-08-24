@@ -86,3 +86,6 @@ htmlcov/
 .env.local
 secrets.json
 *.key
+_orig_backup/
+*.log
+instance.lock

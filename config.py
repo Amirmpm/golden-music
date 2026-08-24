@@ -51,6 +51,20 @@ def config_path() -> Path:
     return cfg_dir / "config.json"
 
 
+def restrict_file_permissions(path) -> None:
+    """Best-effort owner-only permissions on written data files.
+
+    The config and caches contain local filesystem paths (privacy-sensitive).
+    POSIX: chmod 0600. Other platforms (Windows ACLs already scope per-user):
+    no-op.
+    """
+    try:
+        if os.name == "posix":
+            os.chmod(path, 0o600)
+    except OSError:
+        pass  # non-critical hardening — never fail a save over permissions
+
+
 # ============================================================================
 # Themes
 # ============================================================================
@@ -479,6 +493,72 @@ def scan_folder(folder: str) -> list:
             found.append(str(p))
     found.sort(key=lambda x: os.path.basename(x).lower())
     return found
+
+
+# ============================================================================
+# Safe JSON config loading
+# ============================================================================
+MAX_CONFIG_BYTES = 4 * 1024 * 1024  # 4 MiB — configs/caches are far smaller
+MAX_CACHE_ENTRIES = 100_000
+
+
+def load_json_file(path, what: str):
+    """Load a JSON file with size cap and type validation.
+
+    Returns (data, True) on success, (None, False) on any problem.
+    `what` is used for the log line ("config" / "tag cache").
+    """
+    try:
+        p = Path(path)
+        if not p.is_file():
+            return None, False
+        if p.stat().st_size > MAX_CONFIG_BYTES:
+            print(f"{what} file too large, ignoring: {p}")
+            return None, False
+        data = json.loads(p.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            print(f"Malformed {what} file (not an object), ignoring: {p}")
+            return None, False
+        return data, True
+    except (json.JSONDecodeError, OSError, ValueError) as e:
+        print(f"Failed to read {what} file ({e}), using defaults.")
+        return None, False
+
+
+def load_tag_cache_file(path) -> dict:
+    """Load tag_cache.json strictly: dict[path] -> [title, artist] strings.
+
+    Rejects oversized files/entries so a corrupted or tampered cache can't
+    bloat memory at startup.
+    """
+    data, ok = load_json_file(path, "tag cache")
+    if not ok:
+        return {}
+    cache = {}
+    for k, v in data.items():
+        if len(cache) >= MAX_CACHE_ENTRIES:
+            print("Tag cache truncated (too many entries).")
+            break
+        if not isinstance(k, str) or not isinstance(v, list) or len(v) != 2:
+            continue
+        title, artist = v
+        if isinstance(title, str) and isinstance(artist, str):
+            cache[k] = (title, artist)
+    return cache
+
+
+def path_within(child: str, parent: str) -> bool:
+    """True if `child` is inside directory `parent` (path-boundary safe).
+
+    Uses realpaths so symlinked folders can't smuggle tracks in from outside,
+    and compares path components — no 'C:\\MusicX' matching 'C:\\Music' prefix bug.
+    """
+    try:
+        c = Path(child).resolve()
+        p = Path(parent).resolve()
+        return c == p or p in c.parents
+    except (OSError, ValueError):
+        return False
 
 
 def extract_title_artist(filepath: str) -> tuple:

@@ -7,8 +7,11 @@ Simplified, robust implementation:
 - mediaStatusChanged for detecting end-of-track
 - Volume 0.0-1.0 (PyQt6 QAudioOutput uses float)
 """
+import logging
 import os
 from pathlib import Path
+
+log = logging.getLogger("app.audio")
 
 from PyQt6.QtCore import QObject, pyqtSignal, QUrl, QTimer, Qt
 from PyQt6.QtWidgets import QApplication
@@ -55,7 +58,7 @@ class AudioBackend(QObject):
                 except Exception:
                     pass
             except Exception as e:
-                print(f"AudioBackend init error: {e}")
+                log.error(f"Backend init error: {e}")
                 self._available = False
                 self.player = None
                 self.audio_output = None
@@ -95,7 +98,7 @@ class AudioBackend(QObject):
         except Exception as e:
             self._error = f"Play error: {e}"
             self.error_occurred.emit(self._error)
-            print(f"Audio load_and_play error: {e}")
+            log.error(f"load_and_play error: {e}")
 
     def load(self, filepath: str):
         """Load a file without playing."""
@@ -109,7 +112,7 @@ class AudioBackend(QObject):
             url = QUrl.fromLocalFile(filepath)
             self.player.setSource(url)
         except Exception as e:
-            print(f"Audio load error: {e}")
+            log.warning(f"load error: {e}")
 
     def play(self):
         if not self._available or self.player is None:
@@ -126,7 +129,7 @@ class AudioBackend(QObject):
         try:
             self.player.pause()
         except Exception as e:
-            print(f"Pause error: {e}")
+            log.debug(f"pause error: {e}")
 
     def stop(self):
         if not self._available or self.player is None:
@@ -134,7 +137,7 @@ class AudioBackend(QObject):
         try:
             self.player.stop()
         except Exception as e:
-            print(f"Stop error: {e}")
+            log.debug(f"stop error: {e}")
 
     def set_position(self, ms: int):
         if not self._available or self.player is None:
@@ -223,7 +226,7 @@ class AudioBackend(QObject):
                 self._error = "Invalid or unsupported media file"
                 self.error_occurred.emit(self._error)
         except Exception as e:
-            print(f"Media status handler error: {e}")
+            log.error(f"media status handler error: {e}")
 
     def _on_error(self, error=None, error_string=None):
         try:

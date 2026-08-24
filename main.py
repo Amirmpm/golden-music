@@ -20,10 +20,13 @@ if sys.platform == 'win32':
     os.environ.setdefault('QT_MEDIA_BACKEND', 'windowsmediafoundation')
 
 import json
+import logging
 import random
 import time
 from pathlib import Path
 from enum import Enum
+
+from applog import setup_logging
 
 from PyQt6.QtCore import (
     Qt, QSize, QTimer, QEvent, pyqtSignal, QUrl, QObject, QThread,
@@ -48,7 +51,8 @@ from PyQt6.QtGui import (
 from config import (
     APP_NAME, APP_VERSION, ORG_NAME, AUDIO_EXTS, config_path,
     Theme, build_qss, fmt_time, scan_folder, extract_title_artist,
-    HAVE_QT_AUDIO
+    HAVE_QT_AUDIO, load_json_file, load_tag_cache_file,
+    restrict_file_permissions, path_within
 )
 from icons import Icon, render_icon, make_icon, get_dpr
 from audio import AudioBackend
@@ -59,6 +63,8 @@ from widgets import ClickableSlider
 from tray_menu import TrayMenuWidget
 from theme_picker import ThemePickerPopup
 import coverart
+
+log = logging.getLogger("app")
 
 
 class RepeatMode(Enum):
@@ -185,7 +191,7 @@ class CoverLabel(QLabel):
             p.end()
         except Exception as ex:
             # Never crash from paint — just log
-            print(f"CoverLabel paint error: {ex}")
+            log.warning(f"CoverLabel paint error: {ex}")
 
 
 # ============================================================================
@@ -367,7 +373,7 @@ class PlayerBar(QFrame):
                 pm.setDevicePixelRatio(dpr)
                 self.cover_thumb.setPixmap(pm)
         except Exception as ex:
-            print(f"Cover thumb refresh error: {ex}")
+            log.warning(f"Cover thumb refresh error: {ex}")
 
     def set_cover_thumb(self, pm: QPixmap = None):
         self._cover_thumb_pm = pm
@@ -662,6 +668,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(APP_NAME)
         self.resize(1000, 700)
         self.setMinimumSize(860, 620)
+        # Publish window title for second-launch focus (single-instance)
+        self._publish_title_shm()
 
         # State
         self.theme_name = "aurora"
@@ -684,7 +692,6 @@ class MainWindow(QMainWindow):
         self.auto_rescan = True
         self.remember_track = True
         self.default_folder = ""
-        self.crossfade_enabled = False
         self.sleep_timer_active = False
         self.sleep_timer_minutes = 30
         self._sleep_timer = None
@@ -726,6 +733,21 @@ class MainWindow(QMainWindow):
 
         # Load config AFTER window is shown (async, non-blocking)
         QTimer.singleShot(50, self._load_config_async)
+
+    def _publish_title_shm(self):
+        """Share our window title via QSharedMemory so a second launch can
+        find and raise this window."""
+        try:
+            from PyQt6.QtCore import QSharedMemory
+            shm = QSharedMemory("GoldenMusic_WindowTitle")
+            # Leftover segment from a crashed run — clean it up
+            if shm.attach(QSharedMemory.AccessMode.ReadWrite):
+                shm.detach()
+            data = self.windowTitle().encode("utf-8") + b"\x00"
+            if shm.create(len(data)):
+                shm.data()[:len(data)] = data
+        except Exception as e:
+            log.debug(f"title shared memory unavailable: {e}")
 
     def _build_ui(self):
         root = QWidget()
@@ -1261,6 +1283,7 @@ class MainWindow(QMainWindow):
         self.scan_progress.setValue(0)
         self.scan_progress.setVisible(True)
         self.rail.btn_add.setEnabled(False)
+        self.rail.btn_refresh.setEnabled(False)  # no double-queue scans
         self.scanner = FolderScanner(folders, self)
         self.scanner.progress.connect(self._on_scan_progress)
         self.scanner.finished_scan.connect(self._on_scan_finished)
@@ -1291,6 +1314,7 @@ class MainWindow(QMainWindow):
         self.scan_progress.setVisible(False)
         self.scan_status_label.setVisible(False)
         self.rail.btn_add.setEnabled(True)
+        self.rail.btn_refresh.setEnabled(True)
         self._rebuild_library_list()
         self._rebuild_favorites_list()
         self._update_count_label()
@@ -1385,20 +1409,18 @@ class MainWindow(QMainWindow):
             p = config_path().parent / "tag_cache.json"
             cache_data = {path: list(tags) for path, tags in self._tag_cache.items()}
             p.write_text(json.dumps(cache_data, ensure_ascii=False), encoding="utf-8")
+            restrict_file_permissions(p)
         except Exception as e:
-            print(f"Tag cache save error: {e}")
+            log.error(f"Tag cache save error: {e}")
 
     def _load_tag_cache(self):
-        """Load tag cache from disk (instant — no I/O for tag reading)."""
-        try:
-            p = config_path().parent / "tag_cache.json"
-            if p.exists():
-                data = json.loads(p.read_text(encoding="utf-8"))
-                self._tag_cache = {k: tuple(v) for k, v in data.items()}
-                return True
-        except Exception:
-            pass
-        return False
+        """Load tag cache from disk (instant — no I/O for tag reading).
+
+        Validated strictly — a corrupted/tampered cache must never crash the
+        app or blow up memory at startup.
+        """
+        self._tag_cache = load_tag_cache_file(config_path().parent / "tag_cache.json")
+        return bool(self._tag_cache)
 
     def _rebuild_folder_tree(self):
         """Build a tree of added folders and their subfolders."""
@@ -1468,11 +1490,12 @@ class MainWindow(QMainWindow):
             self.search_edit.setText("")
             self._rebuild_library_list()
             return
-        # Filter tracks to those in this folder (fast — string comparison)
+        # Filter tracks to those in this folder (path-boundary safe —
+        # plain startswith would match sibling folders sharing a name prefix)
         folder = data
         self.search_filter = ""
         self.search_edit.setText("")
-        filtered = [p for p in self.library if p.startswith(folder)]
+        filtered = [p for p in self.library if path_within(p, folder)]
         self.library_list.clear()
         for i, path in enumerate(filtered):
             if path in self._tag_cache:
@@ -1588,10 +1611,31 @@ class MainWindow(QMainWindow):
         if path in self.library:
             self.library.remove(path)
         self.favorites.discard(path)
+        if path != self.current_track:
+            # Removing a non-playing track: drop it from the playlist and keep
+            # current_index pointing at the SAME playing track.
+            try:
+                pl_pos = self.current_playlist.index(path)
+                self.current_playlist.pop(pl_pos)
+                if pl_pos < self.current_index:
+                    self.current_index -= 1
+                if not self.current_playlist:
+                    self.current_index = -1
+            except ValueError:
+                pass  # not in the active playlist — nothing to fix
         if path == self.current_track:
             self.audio.stop()
             self.current_track = None
-            self.current_index = -1
+            # Remove the dead entry from the playlist too, keeping the next
+            # track at the same index (or clamped to the new last position)
+            if path in self.current_playlist:
+                pl_pos = self.current_playlist.index(path)
+                self.current_playlist.pop(pl_pos)
+                self.current_index = min(max(0, pl_pos), max(0, len(self.current_playlist) - 1))
+                if not self.current_playlist:
+                    self.current_index = -1
+            else:
+                self.current_index = -1
             self.player_bar.title_label.setText("No track selected")
             self.player_bar.artist_label.setText("—")
             self.now_title.setText("No track selected")
@@ -2016,7 +2060,6 @@ class MainWindow(QMainWindow):
             "auto_rescan": self.auto_rescan,
             "remember_track": self.remember_track,
             "default_folder": self.default_folder,
-            "crossfade_enabled": self.crossfade_enabled,
             "sleep_timer_active": self.sleep_timer_active,
             "sleep_timer_minutes": self.sleep_timer_minutes,
             "sort_mode": self.sort_mode.value,
@@ -2024,18 +2067,15 @@ class MainWindow(QMainWindow):
         try:
             p = config_path()
             p.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+            restrict_file_permissions(p)
         except Exception as e:
-            print(f"Config save error: {e}")
+            log.error(f"Config save error: {e}")
         # Also save tag cache
         self._save_tag_cache()
 
     def _load_config(self):
-        try:
-            p = config_path()
-            if not p.exists():
-                return
-            cfg = json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
+        cfg, ok = load_json_file(config_path(), "config")
+        if not ok:
             return
 
         self.theme_name = cfg.get("theme", "dark")
@@ -2055,7 +2095,6 @@ class MainWindow(QMainWindow):
         self.auto_rescan = cfg.get("auto_rescan", True)
         self.remember_track = cfg.get("remember_track", True)
         self.default_folder = cfg.get("default_folder", "")
-        self.crossfade_enabled = cfg.get("crossfade_enabled", False)
         self.sleep_timer_active = cfg.get("sleep_timer_active", False)
         self.sleep_timer_minutes = cfg.get("sleep_timer_minutes", 30)
         sm = cfg.get("sort_mode", "title")
@@ -2108,14 +2147,9 @@ class MainWindow(QMainWindow):
         self.scan_progress.setVisible(True)
         self.scan_progress.setRange(0, 0)  # indeterminate
 
-        # Read config file (fast — just JSON)
-        try:
-            p = config_path()
-            if not p.exists():
-                self._finish_config_load(None)
-                return
-            cfg = json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
+        # Read config file (fast — just JSON, validated)
+        cfg, ok = load_json_file(config_path(), "config")
+        if not ok:
             self._finish_config_load(None)
             return
 
@@ -2219,7 +2253,127 @@ class MainWindow(QMainWindow):
                 self.player_bar.seek_slider.blockSignals(False)
 
 
+# ============================================================================
+# Single-instance support (Windows)
+# ============================================================================
+_mutex_handle = None
+
+def _acquire_single_instance_lock() -> bool:
+    """Hold a named mutex for the process lifetime.
+
+    Returns True if we are the first instance. The handle is kept in a module
+    global so it survives for the whole process — releasing on exit is optional
+    since Windows cleans up abandoned mutexes automatically.
+    """
+    global _mutex_handle
+    try:
+        import win32event
+        import win32api
+        import winerror
+        _mutex_handle = win32event.CreateMutex(None, False, "GoldenMusic_SingleInstance_Mutex")
+        if win32api.GetLastError() == winerror.ERROR_ALREADY_EXISTS:
+            return False
+        return True
+    except ImportError:
+        # pywin32 missing — fall back to a lock-file heuristic
+        try:
+            lock = config_path().parent / "instance.lock"
+            if lock.exists():
+                return False
+            lock.write_text(str(os.getpid()), encoding="utf-8")
+            return True
+        except OSError:
+            return True  # never block the app over a lock failure
+    except Exception as e:
+        log.warning(f"Single-instance lock unavailable: {e}")
+        return True
+
+
+def _focus_existing_instance():
+    """Bring the already-running window to the foreground (no error shown)."""
+    log.info("Second launch detected — focusing existing instance")
+    try:
+        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtCore import QSharedMemory
+        # Preferred path: running instance publishes its window title via
+        # shared memory so we can find and raise it.
+        shm = QSharedMemory("GoldenMusic_WindowTitle")
+        if shm.attach(QSharedMemory.AccessMode.ReadOnly) and shm.data() is not None:
+            raw = bytes(shm.data()[:shm.size()]).split(b"\x00", 1)[0]
+            title = raw.decode("utf-8", errors="replace")
+            shm.detach()
+            if title and _raise_window_by_title(title):
+                return
+        # Fallback: match by exact window title prefix
+        if _raise_window_by_title(APP_NAME):
+            return
+        log.warning("Existing instance found but its window could not be raised")
+    except Exception as e:
+        log.warning(f"Could not focus existing instance: {e}")
+
+
+def _raise_window_by_title(title_substring: str) -> bool:
+    """Win32: find a visible top-level window whose title contains the
+    substring, restore it if minimized, and bring it to the foreground."""
+    try:
+        import win32gui
+        import win32con
+        found = []
+
+        def enum_handler(hwnd, _):
+            if not win32gui.IsWindowVisible(hwnd):
+                return
+            text = win32gui.GetWindowText(hwnd)
+            if title_substring in text:
+                found.append(hwnd)
+
+        win32gui.EnumWindows(enum_handler, None)
+        if not found:
+            return False
+        hwnd = found[0]
+        if win32gui.IsIconic(hwnd):  # minimized -> restore first
+            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+        win32gui.SetForegroundWindow(hwnd)
+        return True
+    except Exception as e:
+        log.warning(f"raise_window_by_title failed: {e}")
+        return False
+
+
+def _install_crash_guard(app):
+    """Log + swallow unhandled Python exceptions raised inside Qt slots.
+
+    A desktop player must not die because one signal handler threw. The
+    exception is logged with full traceback; truly fatal conditions (MemoryError)
+    are re-raised so the OS can see them.
+    """
+    import traceback as _tb
+
+    def excepthook(exc_type, exc_value, exc_tb):
+        if issubclass(exc_type, (KeyboardInterrupt, SystemExit, MemoryError)):
+            sys.__excepthook__(exc_type, exc_value, exc_tb)
+            return
+        log.error("Unhandled exception:\n" +
+                  "".join(_tb.format_exception(exc_type, exc_value, exc_tb)))
+
+    sys.excepthook = excepthook
+
+    # Qt 6.5+: exceptions in slots propagate through the event loop; notify()
+    # is the official interception point.
+    from PyQt6.QtCore import qInstallMessageHandler  # noqa: F401 (already installed)
+    try:
+        app.installEventFilter(None)  # no-op placeholder keeps imports tidy
+    except Exception:
+        pass
+
+
 def main():
+    log_path = setup_logging()
+    if sys.platform == 'win32':
+        # Single-instance: focus the running window instead of launching a copy
+        if not _acquire_single_instance_lock():
+            _focus_existing_instance()
+            sys.exit(0)
     QApplication.setStyle(QStyleFactory.create("Fusion"))
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
@@ -2231,6 +2385,7 @@ def main():
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
     w = MainWindow()
+    _install_crash_guard(app)
     w.show()
     if QSystemTrayIcon.isSystemTrayAvailable():
         w.tray.show()

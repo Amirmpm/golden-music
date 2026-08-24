@@ -3,7 +3,7 @@ import os, sys, time, traceback, tempfile
 from pathlib import Path
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "goldplay"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from PyQt6.QtCore import Qt, QTimer, QBuffer
 from PyQt6.QtWidgets import QApplication, QMessageBox

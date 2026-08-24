@@ -9,7 +9,7 @@
 #define AppDescription "Golden Music Player"
 
 [Setup]
-AppId={{9F5E7C8D-3B2E-5G4F-AC6D-2B3C4D5E6F7A}
+AppId={{9F5E7C8D-3B2E-5C4F-AC6D-2B3C4D5E6F7A}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
