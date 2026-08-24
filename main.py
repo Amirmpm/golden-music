@@ -695,6 +695,10 @@ class MainWindow(QMainWindow):
         self.play_history = []    # [..., previous_track]
         self.redo_stack = []      # [next_track_after_redo, ...]
         self._nav_via_history = False  # True while stepping back through history
+        # Smart shuffle: paths in the current playlist that have NOT played
+        # yet this session. Shuffle picks from here first so every track
+        # gets a turn before repeats; refilled when the playlist changes.
+        self.shuffle_unplayed = set()
         self.shuffle = False
         self.repeat_mode = RepeatMode.OFF
         self.user_is_seeking = False
@@ -1840,6 +1844,9 @@ class MainWindow(QMainWindow):
         if not self._nav_via_history:
             self.play_history.clear()
             self.redo_stack.clear()
+            # Smart shuffle: fresh queue = everything is unplayed again
+            # except whatever is about to start.
+            self.shuffle_unplayed = set(tracks)
         self._load_and_play_current()
 
     _HISTORY_MAX = 200  # bound memory; deep enough for any listening session
@@ -1864,6 +1871,7 @@ class MainWindow(QMainWindow):
             return
         path = self.current_playlist[self.current_index]
         self._push_history(path)
+        self.shuffle_unplayed.discard(path)   # smart shuffle: this one had its turn
         self.current_track = path
         # Use cached tags if available, otherwise extract (just for current track)
         if path in self._tag_cache:
@@ -1995,12 +2003,23 @@ class MainWindow(QMainWindow):
                 self._nav_via_history = False
             return
         if self.shuffle:
-            # Fresh random jump — only when there is nothing to redo
+            # Fresh random jump — only when there is nothing to redo.
+            # Smart shuffle: prefer tracks that haven't played yet this
+            # session so everything gets a turn before anything repeats.
+            candidates = [p for p in self.shuffle_unplayed
+                          if p in set(self.current_playlist)]
             if len(self.current_playlist) > 1:
-                idx = self.current_index
-                while idx == self.current_index:
-                    idx = random.randrange(len(self.current_playlist))
-                self.current_index = idx
+                if candidates:
+                    chosen = random.choice(candidates)
+                    self.shuffle_unplayed.discard(chosen)
+                else:
+                    # Everything has played — plain shuffle over the list
+                    idx = self.current_index
+                    while idx == self.current_index:
+                        idx = random.randrange(len(self.current_playlist))
+                    chosen = self.current_playlist[idx]
+                self.current_index = max(0, self.current_playlist.index(chosen)) \
+                    if chosen in self.current_playlist else 0
             else:
                 self.current_index = 0
         else:
@@ -2211,13 +2230,21 @@ class MainWindow(QMainWindow):
             pass  # Qt handles this automatically
 
     def _show_tray_popup(self):
-        """Show the custom two-row tray popup near the cursor."""
+        """Show the custom tray popup (now-playing + controls) at cursor."""
         from PyQt6.QtGui import QCursor
         pos = QCursor.pos()
-        # Update play state and theme
+        # Update play state, theme and now-playing header
         self.tray_menu_widget._apply_theme(self.theme)
         playing = self.audio.state() == AudioBackend.STATE_PLAYING
         self.tray_menu_widget.update_play_state(playing)
+        if self.current_track:
+            title, artist = extract_title_artist(self.current_track)
+            if self.current_track in self._tag_cache:
+                title, artist = self._tag_cache[self.current_track]
+            self.tray_menu_widget.update_now_playing(
+                title, artist, self.player_bar._cover_thumb_pm)
+        else:
+            self.tray_menu_widget.update_now_playing()
         # Position the popup above the cursor (so it doesn't go off-screen)
         menu_size = self.tray_menu_widget.size()
         x = pos.x() - menu_size.width() // 2
