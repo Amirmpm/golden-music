@@ -21,23 +21,43 @@ from icons import Icon, render_icon, get_dpr
 
 
 class TrayIconButton(QPushButton):
-    """A flat icon button for the tray menu."""
+    """Glass circular icon button with an optional label under it."""
 
-    def __init__(self, svg_string: str, size: int = 24, parent=None):
+    def __init__(self, svg_string: str, size: int = 24, label: str = "",
+                 parent=None):
         super().__init__(parent)
         self.svg_string = svg_string
         self.icon_size = size
-        self.setFixedSize(48, 48)
+        self.label_text = label
+        if label:
+            self.setFixedSize(68, 60)
+            self.setText(label)
+        else:
+            self.setFixedSize(48, 48)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._hover = False
         self._color = "#d4a85a"
-        self.setStyleSheet("""
-            QPushButton {
-                background: transparent; border: none; border-radius: 10px;
-                padding: 0; margin: 0;
-            }
-            QPushButton:hover { background: rgba(255,255,255,0.08); }
+        self._label_color = "rgba(240, 230, 210, 200)"
+        self._apply_base_style()
+
+    def _apply_base_style(self):
+        r = 14
+        self.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent; border: none;
+                border-radius: {r}px; padding: 2px; margin: 0;
+                font-size: 11px; font-weight: 600; color: {self._label_color};
+            }}
+            QPushButton:hover {{
+                background-color: rgba(255,255,255,26);
+                border: 1px solid rgba(255,255,255,34);
+            }}
         """)
+
+    def set_label_color(self, color: str):
+        """Keep the caption readable in both states."""
+        self._label_color = color
+        self._apply_base_style()
 
     def set_color(self, color: str):
         self._color = color
@@ -62,7 +82,8 @@ class TrayIconButton(QPushButton):
         dpr = get_dpr()
         pm = render_icon(self.svg_string, self.icon_size, color, dpr)
         self.setIcon(QIcon(pm))
-        self.setIconSize(self.icon_size * 0.8 and self.rect().size() * 0)
+        from PyQt6.QtCore import QSize
+        self.setIconSize(QSize(self.icon_size, self.icon_size))
 
 
 class TrayMenuWidget(QFrame):
@@ -72,22 +93,23 @@ class TrayMenuWidget(QFrame):
     play_clicked = pyqtSignal()
     next_clicked = pyqtSignal()
     show_clicked = pyqtSignal()
-    library_clicked = pyqtSignal()
+    close_clicked = pyqtSignal()
     quit_clicked = pyqtSignal()
 
     def __init__(self, theme, parent=None):
         super().__init__(parent)
         self.theme = theme
+        self._dividers = []          # kept so set_theme() can restyle them
         self.setWindowFlags(
             Qt.WindowType.Popup |
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.NoDropShadowWindowHint
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setFixedSize(260, 168)
+        self.setFixedSize(300, 224)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 10)
+        layout.setContentsMargins(14, 14, 14, 12)
         layout.setSpacing(8)
 
         # ---- Now-playing header: [cover] title / artist ----
@@ -103,7 +125,7 @@ class TrayMenuWidget(QFrame):
         header.addWidget(self.cover_label)
 
         info_col = QVBoxLayout()
-        info_col.setSpacing(1)
+        info_col.setSpacing(2)
         self.track_title = QLabel("No track playing")
         self.track_title.setStyleSheet(
             f"color: {theme['gold_light']}; font-size: 13px; font-weight: 600;")
@@ -115,18 +137,19 @@ class TrayMenuWidget(QFrame):
         header.addLayout(info_col, 1)
         layout.addLayout(header)
 
-        # Divider
+        # Divider (attribute kept so set_theme() can restyle it)
         divider = QFrame()
         divider.setFixedHeight(1)
         divider.setStyleSheet(f"background: {theme['border']};")
         layout.addWidget(divider)
+        self._dividers.append(divider)
 
         # Row 1: prev / play / next
         row1 = QHBoxLayout()
         row1.setSpacing(4)
-        self.btn_prev = TrayIconButton(Icon.PREV, 24)
-        self.btn_play = TrayIconButton(Icon.PLAY, 28)
-        self.btn_next = TrayIconButton(Icon.NEXT, 24)
+        self.btn_prev = TrayIconButton(Icon.PREV, 24, "Prev")
+        self.btn_play = TrayIconButton(Icon.PLAY, 28, "Play")
+        self.btn_next = TrayIconButton(Icon.NEXT, 24, "Next")
         row1.addWidget(self.btn_prev)
         row1.addWidget(self.btn_play)
         row1.addWidget(self.btn_next)
@@ -134,24 +157,25 @@ class TrayMenuWidget(QFrame):
         row1_w.setLayout(row1)
         layout.addWidget(row1_w)
 
-        # Divider
+        # Divider (attribute kept so set_theme() can restyle it)
         divider = QFrame()
         divider.setFixedHeight(1)
         divider.setStyleSheet(f"background: {theme['border']};")
         layout.addWidget(divider)
+        self._dividers.append(divider)
 
-        # Row 2: show / library / quit
+        # Row 2: show / quit / close-menu
         row2 = QHBoxLayout()
         row2.setSpacing(4)
-        self.btn_show = TrayIconButton(Icon.CHEVRON_RIGHT, 22)
+        self.btn_show = TrayIconButton(Icon.CHEVRON_RIGHT, 22, "Show")
         self.btn_show.setToolTip("Show / Hide")
-        self.btn_library = TrayIconButton(Icon.MUSIC_NOTE, 24)
-        self.btn_library.setToolTip("Open Library")
-        self.btn_quit = TrayIconButton(Icon.CLOSE, 22)
+        self.btn_quit = TrayIconButton(Icon.CLOSE, 22, "Quit")
         self.btn_quit.setToolTip("Quit")
+        self.btn_close = TrayIconButton(Icon.CHEVRON_DOWN, 22, "Close")
+        self.btn_close.setToolTip("Close this menu")
         row2.addWidget(self.btn_show)
-        row2.addWidget(self.btn_library)
         row2.addWidget(self.btn_quit)
+        row2.addWidget(self.btn_close)
         row2_w = QWidget()
         row2_w.setLayout(row2)
         layout.addWidget(row2_w)
@@ -161,7 +185,7 @@ class TrayMenuWidget(QFrame):
         self.btn_play.clicked.connect(self.play_clicked.emit)
         self.btn_next.clicked.connect(self.next_clicked.emit)
         self.btn_show.clicked.connect(self.show_clicked.emit)
-        self.btn_library.clicked.connect(self.library_clicked.emit)
+        self.btn_close.clicked.connect(self.close_clicked.emit)
         self.btn_quit.clicked.connect(self.quit_clicked.emit)
 
         self._apply_theme(theme)
@@ -170,8 +194,10 @@ class TrayMenuWidget(QFrame):
         self.theme = theme
         accent = theme["gold"]
         for btn in [self.btn_prev, self.btn_play, self.btn_next,
-                    self.btn_show, self.btn_library, self.btn_quit]:
+                    self.btn_show, self.btn_close, self.btn_quit]:
             btn.set_color(accent)
+            if btn.label_text:
+                btn.set_label_color(theme["text"])
         # Restyle the header with the active theme colors
         self.track_title.setStyleSheet(
             f"color: {theme['gold_light']}; font-size: 13px; font-weight: 600;")
@@ -180,6 +206,13 @@ class TrayMenuWidget(QFrame):
         self.cover_label.setStyleSheet(
             f"border-radius: 8px; border: 1px solid {theme['border']};"
             f"background: {theme['panel_bg_2']};")
+        for d in self._dividers:
+            d.setStyleSheet(f"background: {theme['border']};")
+        self.update()                       # repaint glass bg w/ new theme
+
+    def set_theme(self, theme: dict):
+        """Public re-style entry point (same API as rail / player_bar)."""
+        self._apply_theme(theme)
 
     def update_now_playing(self, title: str = "", artist: str = "",
                            cover_pm: QPixmap = None):
@@ -189,9 +222,9 @@ class TrayMenuWidget(QFrame):
             a = (artist or "").strip()
             # Elide long strings so the popup keeps its size
             fm = self.track_title.fontMetrics()
-            self.track_title.setText(fm.elidedText(t, Qt.TextElideMode.ElideRight, 170))
+            self.track_title.setText(fm.elidedText(t, Qt.TextElideMode.ElideRight, 190))
             fm2 = self.track_artist.fontMetrics()
-            self.track_artist.setText(fm2.elidedText(a or "—", Qt.TextElideMode.ElideRight, 170))
+            self.track_artist.setText(fm2.elidedText(a or "—", Qt.TextElideMode.ElideRight, 190))
             if cover_pm is not None and not cover_pm.isNull():
                 scaled = cover_pm.scaled(
                     44, 44, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
@@ -235,9 +268,9 @@ class TrayMenuWidget(QFrame):
             p = QPainter(self)
             p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
             rect = self.rect().adjusted(2, 2, -2, -2)
-            # Background
+            # Glassy background: semi-transparent panel
             bg = QColor(self.theme["panel_bg"])
-            bg.setAlpha(245)
+            bg.setAlpha(185)
             p.setBrush(QBrush(bg))
             p.setPen(QPen(QColor(self.theme["border"]), 1))
             p.drawRoundedRect(rect, 12, 12)

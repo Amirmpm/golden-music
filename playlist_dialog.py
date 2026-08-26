@@ -8,6 +8,7 @@ Playlists live in MainWindow.playlists and are saved with _save_config().
 import os
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QListWidget,
     QListWidgetItem, QInputDialog, QMessageBox, QWidget, QGridLayout

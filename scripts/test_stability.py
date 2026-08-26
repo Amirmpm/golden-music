@@ -185,8 +185,9 @@ check("drag_seek_no_crash", drag_seek)
 print("\n=== Theme Switch Stability ===")
 
 def switch_all_themes():
-    for name in ["dark", "light", "midnight", "ocean", "sunset", "emerald",
-                 "lavender", "carbon", "aurora", "teal", "crimson"]:
+    for name in ["obsidian", "royal_gold", "midnight_blue", "amethyst",
+                 "neon_rose", "emerald_night", "porcelain", "ivory",
+                 "azure", "lilac", "blush", "sage"]:
         w.theme_name = name
         w._apply_theme()
         # Click slider after theme change

@@ -14,6 +14,7 @@ datas = [
     ('assets/icon.png', 'assets'),
     ('assets/logo.png', 'assets'),
     ('assets/icon.ico', 'assets'),
+    ('assets/icons', 'assets/icons'),  # Lucide SVG icon set (loaded at runtime)
 ]
 
 # Only the Qt plugins actually exercised by the app:

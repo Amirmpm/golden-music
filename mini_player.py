@@ -87,7 +87,7 @@ class MiniPlayer(QWidget):
         self.expand_btn = QPushButton("Expand ▼")
         self.expand_btn.setFixedHeight(18)
         self.expand_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.expand_btn.setStyleSheet(f"color: {self.theme['muted']}; background: transparent; border: none; font-size: 10px;")
+        self.expand_btn.setStyleSheet(f"color: {self.theme['muted']}; background: transparent; border: none; font-size: 11px;")
         self.expand_btn.clicked.connect(self._expand)
         bottom_row.addWidget(self.expand_btn)
         layout.addLayout(bottom_row)
@@ -119,7 +119,7 @@ class MiniPlayer(QWidget):
         color = self.theme["window_bg"]
         pm = render_icon(self.play_btn._svg, 16, color, dpr)
         self.play_btn.setIcon(QIcon(pm))
-        self.play_btn.setIconSize(self.play_btn.size() - QSize(8, 8) if False else self.play_btn.size())
+        self.play_btn.setIconSize(self.play_btn.size())
 
     def update_track(self, title, artist, cover_pm):
         try:

@@ -5,7 +5,111 @@ All notable changes to Golden Music will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-08-27
+
+### 🐞 Fixed — Light-theme readability bugs
+
+Batch of visual bugs that made parts of the UI unreadable after selecting a
+light theme (Porcelain / Ivory / Azure / Lilac / Blush / Sage), especially on
+machines where Windows itself runs in dark mode.
+
+### Fixed
+- **Tray popup kept boot colors** — the tray icon popup (`TrayMenuWidget`)
+  was built *before* the saved theme was read, so on any fresh boot into a
+  non-default theme (e.g. Porcelain) the popup kept Royal Gold colors: brown
+  dividers, gold accents and a dark glass background. The saved theme is now
+  read before the tray is built, `TrayMenuWidget` gained a public
+  `set_theme()` (same API as the rail / player bar) that also re-styles its
+  dividers, and `MainWindow._apply_theme` calls it on every theme switch.
+- **Black-on-black tooltips** — every tooltip anchored to an app icon button
+  (rail, player bar) rendered with a near-black background and dark text in
+  light themes. Root cause: the button's own widget-level stylesheet broke
+  `QTipLabel` style resolution. `IconButton` now paints its hover/checked
+  glass circle in `paintEvent` and carries no stylesheet, so the themed
+  `QToolTip` rule applies again.
+- **Stale colors on the Stats page** — "total listening time" and
+  "Sessions opened" kept the *previous* theme's muted color (beige `#ab9776`
+  from Royal Gold) on a white background after switching themes. Two fixes:
+  the saved theme is now loaded *before* the UI is built (no more baking
+  default-theme colors into inline styles), and `_apply_theme` runs a sweep
+  that rewrites any remaining previous-theme color tokens in descendant
+  widgets' stylesheets — so *every* inline-styled widget now follows theme
+  switches, in both directions.
+- **Unreadable Settings dialog in OS dark mode** — with Windows in dark mode
+  the dialog background, tab-bar strip, and scroll-area viewport fell back to
+  the system dark palette while the app theme was light, leaving dark group
+  titles on dark strips. The application palette now mirrors the active
+  theme (Window/Base/Text/ToolTip/Highlight roles) and Fusion is pinned to
+  the matching Qt color scheme, so unstyled regions always match the theme.
+- **Group-box titles** — titles used `gold_light` (tuned for dark surfaces)
+  and were crossed by the frame border. They now use the theme accent with an
+  opaque background patch behind the text; readable on both color families.
+- Themed QSS is additionally applied at application level so tooltips, menus
+  and message boxes outside the main window hierarchy pick up the theme.
+
+### ✅ Verification (v2.0.1)
+Automated offscreen harness over **all 12 themes** (fresh boot with a saved
+config, one process per theme): effective theme always equals the saved one;
+Stats-page worst-label contrast 5.1–6.9:1 (WCAG AA); tooltips themed to the
+correct family (light bg on light themes, dark bg on dark themes) with
+13.3–15.7:1 text contrast; Settings dialog, tray popup and every descendant
+stylesheet free of foreign-theme color tokens after boot and after
+bidirectional theme-switch cycles.
+
+### 📦 Installer (v2.0.1)
+- `goldenmusic.iss` now sets `SetupArchitecture=x64` (Inno Setup 7+): the
+  Setup program itself ships as a 64-bit binary, matching the x64-only
+  payload. Compiling with Inno Setup 6 still works — just delete that line.
+- Bundle slimmed 115 → 84 MB by removing files the app provably never loads:
+  software-OpenGL rasterizer (`opengl32sw.dll`, 20 MB), Qt PDF engine
+  (`Qt6Pdf.dll`), Qt builtin translations (7 MB), touch-gesture and
+  network-information plugins. Kept: the full FFmpeg audio stack, QtNetwork
+  (imported by Qt6Multimedia) and the TLS/ssl stack (the lyrics downloader
+  uses urllib).
+- End-to-end pipeline verified: PyInstaller bundle built and smoke-tested on
+  Windows binaries, installer produced with the Inno Setup 7.1.0 x64
+  command-line compiler, silent install / 12-theme boot matrix / silent
+  uninstall all verified clean (repeated twice — zero issues remaining).
+
 ---
+
+## [2.0.0] - 2026-08-27
+
+### 🎨 Design Overhaul — Psychology Theme Suite
+
+A landmark release rebuilding the app's entire visual identity around
+color-psychology research and measurable accessibility targets.
+
+### ✨ Added
+- **12 hand-tuned themes** replacing the previous ad-hoc set: six
+  black-dominant dark themes and six white-dominant light themes covering
+  the full accent spectrum — black/white monochrome, gold, blue, purple,
+  pink, green
+- Every palette numerically verified against WCAG 2.x contrast gates before
+  shipping (body text >= 4.5:1 everywhere; headings/accents >= 5:1;
+  monotonic button gradients); selected-row / hover states included in the audit
+- **Legacy theme migration** — configs saved under pre-2.0 theme ids map
+  transparently to the closest new successor on first launch
+- Regenerated README screenshots straight from the live offscreen build
+
+### 🔧 Changed
+- Fresh-install default theme is now **Royal Gold**
+- *Auto theme* (follow Windows dark/light mode) now switches between
+  Royal Gold and Ivory Gold
+- Theme picker groups swatches into DARK / LIGHT sections (6 + 6)
+- **Theme picker rebuilt** for auditioning workflows: swatches now sit
+  3 per row (3+3 / 3+3) in a compact 348 px panel, selecting a theme
+  no longer closes the picker — it stays open and even re-skins itself
+  live so several themes can be compared back-to-back; the panel is
+  dismissed only by clicking outside it or via the new round ✕ button
+  (same Lucide icon set as the rest of the app). The active theme is
+  marked with a persistent accent ring
+
+### 🐞 Fixed
+- Carried-in fixes from the 1.2.0-fixed engineering pack: Up Next panel
+  refresh crash (NameError), global media keys never firing on PyQt6,
+  WMA cover-art tagging TypeError, lyrics-loader thread destroyed mid-run
+
 
 ## [1.1.0] - 2026-08-24
 

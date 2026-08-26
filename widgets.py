@@ -1,53 +1,74 @@
 """
-Golden Music — Custom widgets v5.0 (STABLE).
+Golden Music — Custom widgets v6.0.
 
-ClickableSlider: a QSlider subclass with click-to-seek.
-NO custom painting — uses QSlider's built-in rendering via QSS.
-Only overrides mousePressEvent to compute value from click position.
+ClickableSlider: a QSlider with click-to-seek AND reliable drag-to-seek.
+The drag is handled entirely here (press/move/release) so the app can
+reliably know when the user is seeking — QSlider's built-in drag tracking
+fires sliderPressed/sliderReleased at unpredictable times when the press
+lands on the groove instead of the handle, which broke dragging.
 """
-from PyQt6.QtCore import Qt, QPoint, QPointF
-from PyQt6.QtWidgets import QSlider, QStyle, QStyleOptionSlider
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QSlider
 from PyQt6.QtGui import QMouseEvent
 
 
 class ClickableSlider(QSlider):
-    """A QSlider where clicking anywhere on the groove jumps to that position.
-    Uses QSlider's built-in painting — no custom paint code.
-    """
+    """A QSlider where clicking anywhere jumps to that position and
+    dragging scrubs smoothly. Emits dragStarted / dragFinished so the
+    owner can pause position updates while the user is seeking."""
 
     def __init__(self, orientation=Qt.Orientation.Horizontal, parent=None):
         super().__init__(orientation, parent)
+        self._dragging = False
+        self.setTracking(True)
 
     def set_smooth(self, smooth: bool):
-        """For compatibility — QSlider already tracks smoothly."""
+        """For compatibility — tracking is always on."""
         self.setTracking(True)
 
     def set_theme(self, theme: dict):
         """For compatibility — styling is done via QSS."""
         pass
 
-    def mousePressEvent(self, event: QMouseEvent):
-        """Click anywhere to jump to that position."""
-        if event.button() == Qt.MouseButton.LeftButton:
-            # Compute value from click position using simple math
-            if self.orientation() == Qt.Orientation.Horizontal:
-                w = self.width()
-                if w > 0:
-                    ratio = event.position().x() / w
-                else:
-                    ratio = 0.0
-            else:
-                h = self.height()
-                if h > 0:
-                    ratio = 1.0 - (event.position().y() / h)
-                else:
-                    ratio = 0.0
-            ratio = max(0.0, min(1.0, ratio))
-            val = int(self.minimum() + ratio * (self.maximum() - self.minimum()))
-            self.setValue(val)
-            # Emit sliderMoved so connected slots fire
-            self.sliderMoved.emit(val)
-            # Let QSlider handle the rest (start dragging from new position)
-            super().mousePressEvent(event)
+    # ------------------------------------------------------------------
+    def _value_for_pos(self, x: float, y: float) -> int:
+        if self.orientation() == Qt.Orientation.Horizontal:
+            w = max(1, self.width())
+            ratio = min(1.0, max(0.0, x / w))
         else:
-            super().mousePressEvent(event)
+            h = max(1, self.height())
+            ratio = min(1.0, max(0.0, 1.0 - (y / h)))
+        return round(self.minimum() + ratio * (self.maximum() - self.minimum()))
+
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._dragging = True
+            val = self._value_for_pos(event.position().x(), event.position().y())
+            self.setSliderDown(True)          # native handle-pressed look
+            self.setValue(val)
+            self.sliderPressed.emit()
+            self.sliderMoved.emit(val)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        if self._dragging:
+            val = self._value_for_pos(event.position().x(), event.position().y())
+            self.setValue(val)
+            self.sliderMoved.emit(val)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton and self._dragging:
+            self._dragging = False
+            self.setSliderDown(False)
+            self.sliderReleased.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def is_dragging(self) -> bool:
+        return self._dragging

@@ -57,48 +57,79 @@ class SettingsDialog(QDialog):
 
     def _apply_styles(self):
         t = self.theme
+        is_dark = t.get('is_dark')
+        # Readable accent for group-box titles on BOTH color families:
+        # light themes use a dark "ink" accent (readable on white), dark
+        # themes use the bright accent (readable on near-black).
+        # (gold_light is tuned for dark surfaces only.)
+        title_col = t['gold']
         self.setStyleSheet(f"""
             QDialog {{ background: {t['window_bg']}; color: {t['text']}; }}
+            QWidget {{ color: {t['text']}; font-size: 13px; }}
+            QTabWidget {{ background: {t['window_bg']}; }}
             QTabWidget::pane {{ border: 1px solid {t['border']}; border-radius: 8px; background: {t['panel_bg']}; }}
-            QTabBar::tab {{ background: {t['panel_bg_2']}; color: {t['muted']}; padding: 8px 16px; border-radius: 6px; margin: 2px; }}
-            QTabBar::tab:selected {{ background: {t['gold']}; color: {t['window_bg']}; }}
+            QTabBar {{ background: {t['window_bg']}; }}
+            QTabBar::tab {{ background: {t['panel_bg_2']}; color: {t['muted']}; padding: 8px 16px; border-radius: 6px; margin: 2px; font-size: 13px; }}
+            QTabBar::tab:selected {{ background: {t['gold']}; color: {'#ffffff' if is_dark else t['window_bg']}; font-weight: 600; }}
+            QTabBar::tab:hover {{ color: {t['gold_light']}; }}
+            QScrollArea {{ background: transparent; }}
+            QScrollArea > QWidget > QWidget {{ background: transparent; }}
             QGroupBox {{
-                color: {t['gold_light']}; font-weight: 600; font-size: 13px;
+                color: {title_col}; font-weight: 600; font-size: 13px;
                 border: 1px solid {t['border']}; border-radius: 8px;
                 margin-top: 12px; padding-top: 12px;
+                background: {t['panel_bg']};
             }}
-            QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 4px; }}
-            QLabel {{ color: {t['text']}; }}
+            QGroupBox::title {{
+                subcontrol-origin: margin; left: 10px; padding: 0 4px;
+                color: {title_col};
+                background: {t['panel_bg']};
+            }}
+            QLabel {{ color: {t['text']}; background: transparent; }}
             QPushButton {{
                 background: {t['panel_bg_2']}; color: {t['text']};
                 border: 1px solid {t['border']}; border-radius: 6px;
-                padding: 8px 16px; font-size: 12px;
+                padding: 8px 16px; font-size: 13px;
             }}
-            QPushButton:hover {{ background: {t['border']}; }}
-            QPushButton#GoldBtn {{ background: {t['gold']}; color: {t['window_bg']}; font-weight: 600; border: none; }}
-            QPushButton#GoldBtn:hover {{ background: {t['gold_light']}; }}
+            QPushButton:hover {{ background: {t['active']}; border-color: {t['gold']}; color: {t['gold_light']}; }}
+            QPushButton:disabled {{ color: {t['muted']}; }}
+            QPushButton#GoldBtn {{ background: {t['gold']}; color: {'#ffffff' if not is_dark else t['window_bg']}; font-weight: 600; border: none; }}
+            QPushButton#GoldBtn:hover {{ background: {t['gold_light']}; color: {'#ffffff' if not is_dark else t['window_bg']}; }}
             QPushButton#DangerBtn {{ background: transparent; color: #e05050; border: 1px solid #603030; }}
-            QPushButton#DangerBtn:hover {{ background: #302020; }}
+            QPushButton#DangerBtn:hover {{ background: rgba(224, 80, 80, 30); color: #ff7070; }}
             QComboBox {{
                 background: {t['panel_bg_2']}; color: {t['text']};
                 border: 1px solid {t['border']}; border-radius: 6px;
                 padding: 6px 10px; min-width: 120px;
             }}
-            QComboBox::drop-down {{ border: none; width: 24px; }}
-            QComboBox QAbstractItemView {{ background: {t['panel_bg']}; color: {t['text']}; selection-background-color: {t['active']}; }}
-            QCheckBox {{ color: {t['text']}; spacing: 8px; }}
+            QComboBox:hover {{ border-color: {t['gold']}; }}
+            QComboBox:disabled {{ color: {t['muted']}; background: {t['panel_bg']}; }}
+            QComboBox QAbstractItemView {{
+                background: {t['panel_bg']}; color: {t['text']};
+                selection-background-color: {t['active']}; selection-color: {t['gold_light']};
+                border: 1px solid {t['border']}; outline: 0;
+            }}
+            QCheckBox {{ color: {t['text']}; spacing: 8px; background: transparent; }}
+            QCheckBox:hover {{ color: {t['gold_light']}; }}
+            QCheckBox:disabled {{ color: {t['muted']}; }}
             QCheckBox::indicator {{ width: 18px; height: 18px; border-radius: 4px; border: 1px solid {t['border']}; background: {t['panel_bg_2']}; }}
+            QCheckBox::indicator:hover {{ border-color: {t['gold']}; }}
             QCheckBox::indicator:checked {{ background: {t['gold']}; border-color: {t['gold']}; }}
             QSpinBox {{
                 background: {t['panel_bg_2']}; color: {t['text']};
                 border: 1px solid {t['border']}; border-radius: 6px;
                 padding: 4px 8px; min-width: 80px;
             }}
+            QSpinBox:disabled {{ color: {t['muted']}; background: {t['panel_bg']}; }}
             QLineEdit {{
                 background: {t['panel_bg_2']}; color: {t['text']};
                 border: 1px solid {t['border']}; border-radius: 6px;
                 padding: 6px 10px;
             }}
+            QScrollBar:vertical {{ background: {t['panel_bg']}; width: 10px; }}
+            QScrollBar::handle:vertical {{ background: {t['border']}; border-radius: 5px; min-height: 30px; }}
+            QScrollBar::handle:vertical:hover {{ background: {t['gold_deep']}; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
         """)
 
     def _build_appearance_tab(self) -> QWidget:
@@ -129,8 +160,12 @@ class SettingsDialog(QDialog):
         return tab
 
     def _build_playback_tab(self) -> QWidget:
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
+        from PyQt6.QtWidgets import QScrollArea
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        tab_inner = QWidget()
+        layout = QVBoxLayout(tab_inner)
         layout.setSpacing(12)
 
         # Volume group
@@ -141,6 +176,64 @@ class SettingsDialog(QDialog):
         self.default_vol_spin.setSuffix(" %")
         vol_layout.addRow("Default volume:", self.default_vol_spin)
         layout.addWidget(vol_group)
+
+        # Playback effects group (all toggleable per user request)
+        fx_group = QGroupBox("Playback Effects")
+        fx_layout = QVBoxLayout(fx_group)
+        self.fade_cb = QCheckBox("Smooth volume fade on pause / track change")
+        fx_layout.addWidget(self.fade_cb)
+        self.ab_cb = QCheckBox("Show A-B Repeat button")
+        fx_layout.addWidget(self.ab_cb)
+        self.rate_cb = QCheckBox("Show playback speed button (0.5x – 2x)")
+        fx_layout.addWidget(self.rate_cb)
+        fade_row = QHBoxLayout()
+        fade_row.addWidget(QLabel("Fade duration:"))
+        self.fade_spin = QSpinBox()
+        self.fade_spin.setRange(100, 2000)
+        self.fade_spin.setSingleStep(100)
+        self.fade_spin.setSuffix(" ms")
+        fade_row.addWidget(self.fade_spin)
+        fade_row.addStretch(1)
+        fx_layout.addLayout(fade_row)
+        layout.addWidget(fx_group)
+
+        # Lyrics group
+        lyr_group = QGroupBox("Lyrics")
+        lyr_layout = QVBoxLayout(lyr_group)
+        self.lyrics_cb = QCheckBox("Show lyrics button (sidecar .lrc / embedded / online)")
+        lyr_layout.addWidget(self.lyrics_cb)
+        self.lyrics_online_cb = QCheckBox("Allow fetching lyrics online when missing")
+        lyr_layout.addWidget(self.lyrics_online_cb)
+        layout.addWidget(lyr_group)
+
+        # Appearance extras
+        ui_group = QGroupBox("Interface")
+        ui_layout = QVBoxLayout(ui_group)
+        self.auto_theme_cb = QCheckBox("Auto theme — follow Windows dark/light mode")
+        ui_layout.addWidget(self.auto_theme_cb)
+        self.toast_cb = QCheckBox("Notify on track change (when window is hidden)")
+        ui_layout.addWidget(self.toast_cb)
+        self.tray_min_cb = QCheckBox(
+            "Clicking the taskbar icon sends the app to the tray instead of minimizing")
+        ui_layout.addWidget(self.tray_min_cb)
+        layout.addWidget(ui_group)
+
+        # Audio output selection
+        out_group = QGroupBox("Audio Output")
+        out_layout = QVBoxLayout(out_group)
+        self.output_combo = QComboBox()
+        self.output_combo.addItem("System default", "")
+        try:
+            from audio_output import list_output_devices
+            for name, dev_id in list_output_devices():
+                self.output_combo.addItem(name, dev_id)
+        except Exception:
+            pass
+        out_layout.addWidget(self.output_combo)
+        hint = QLabel("Applies to new playback; restart the app for full effect.")
+        hint.setStyleSheet(f"color: {self.main_window.theme['muted']}; font-size: 11px;")
+        out_layout.addWidget(hint)
+        layout.addWidget(out_group)
 
         # Sleep timer group
         sleep_group = QGroupBox("Sleep Timer")
@@ -160,8 +253,17 @@ class SettingsDialog(QDialog):
         self.sleep_cb.toggled.connect(self.sleep_spin.setEnabled)
         layout.addWidget(sleep_group)
 
+        # Crossfade removed — replaced by real Fade above.
+
         layout.addStretch(1)
-        return tab
+        scroll.setWidget(tab_inner)
+
+        outer = QVBoxLayout()
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(scroll)
+        host = QWidget()
+        host.setLayout(outer)
+        return host
 
     def _build_library_tab(self) -> QWidget:
         tab = QWidget()
@@ -268,12 +370,30 @@ class SettingsDialog(QDialog):
         if idx >= 0:
             self.theme_combo.setCurrentIndex(idx)
         self._update_theme_preview()
+        self.auto_theme_cb.setChecked(getattr(self.main_window, 'auto_theme_enabled', False))
+        self.toast_cb.setChecked(getattr(self.main_window, '_toast_enabled', True))
+        self.tray_min_cb.setChecked(getattr(self.main_window, 'taskbar_close_to_tray', False))
 
         # Playback
         self.default_vol_spin.setValue(getattr(self.main_window, '_last_volume', 80))
         self.sleep_cb.setChecked(getattr(self.main_window, 'sleep_timer_active', False))
         self.sleep_spin.setValue(getattr(self.main_window, 'sleep_timer_minutes', 30))
         self.sleep_spin.setEnabled(self.sleep_cb.isChecked())
+        fx = getattr(self.main_window, 'fx', None)
+        self.fade_cb.setChecked(bool(fx and fx.enabled_fade))
+        if fx:
+            self.fade_spin.setValue(int(getattr(fx, 'fade_ms', 300)))
+        self.ab_cb.setChecked(True)
+        self.rate_cb.setChecked(True)
+        self.lyrics_cb.setChecked(True)
+        self.lyrics_online_cb.setChecked(
+            getattr(self.main_window, 'lyrics_online_enabled', True))
+
+        # Audio output
+        saved_out = getattr(self.main_window, 'audio_output_id', "")
+        i = self.output_combo.findData(saved_out or "")
+        if i >= 0:
+            self.output_combo.setCurrentIndex(i)
 
         # Library
         self.folder_edit.setText(getattr(self.main_window, 'default_folder', ''))
@@ -336,9 +456,33 @@ class SettingsDialog(QDialog):
         if new_theme != self.main_window.theme_name:
             self.main_window.theme_name = new_theme
             self.main_window._apply_theme()
+        self.main_window.auto_theme_enabled = self.auto_theme_cb.isChecked()
+        self.main_window._apply_auto_theme_setting()
+        self.main_window._toast_enabled = self.toast_cb.isChecked()
+        self.main_window.taskbar_close_to_tray = self.tray_min_cb.isChecked()
 
-        # Apply playback
+        # Apply playback effects
         self.main_window._last_volume = self.default_vol_spin.value()
+        fx = getattr(self.main_window, 'fx', None)
+        if fx:
+            fx.enabled_fade = self.fade_cb.isChecked()
+            fx.fade_ms = self.fade_spin.value()
+        mw = self.main_window
+        mw.player_bar.ab_btn.setVisible(self.ab_cb.isChecked())
+        mw.player_bar.rate_btn.setVisible(self.rate_cb.isChecked())
+        mw.player_bar.lyrics_btn.setVisible(self.lyrics_cb.isChecked())
+        mw.lyrics_online_enabled = self.lyrics_online_cb.isChecked()
+
+        # Audio output device
+        dev_id = self.output_combo.currentData() or ""
+        mw.audio_output_id = dev_id
+        try:
+            from audio_output import apply_output_device
+            apply_output_device(mw.audio, dev_id)
+        except Exception as e:
+            import logging
+            logging.getLogger("app.settings").warning(f"output switch failed: {e}")
+
         if self.sleep_cb.isChecked():
             self.main_window.start_sleep_timer(self.sleep_spin.value())
         else:

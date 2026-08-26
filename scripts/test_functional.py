@@ -141,18 +141,13 @@ check("repeat_cycle", repeat_cycle)
 
 print("\n=== Theme Selection ===")
 def theme_select():
-    # Test direct theme selection via _on_theme_selected
-    w.theme_name = "dark"; w._apply_theme()
-    w._on_theme_selected("light")
-    assert w.theme_name == "light"
-    w._on_theme_selected("ocean")
-    assert w.theme_name == "ocean"
-    w._on_theme_selected("emerald")
-    assert w.theme_name == "emerald"
-    w._on_theme_selected("lavender")
-    assert w.theme_name == "lavender"
-    w._on_theme_selected("dark")
-    assert w.theme_name == "dark"
+    # Test direct theme selection via _on_theme_selected (v2.0 suite)
+    for name in ["porcelain", "midnight_blue", "emerald_night",
+                 "amethyst", "neon_rose", "sage"]:
+        w._on_theme_selected(name)
+        assert w.theme_name == name, f"switch to {name} failed"
+    w._on_theme_selected("royal_gold")
+    assert w.theme_name == "royal_gold"
 check("theme_select_all", theme_select)
 
 print("\n=== Config ===")

@@ -6,7 +6,7 @@
 
 ### A beautiful, modern music player for Windows
 
-*Listen to your music in style — 14 themes, zero clutter, pure enjoyment.*
+*Listen to your music in style — 12 psychology-driven themes, zero clutter, pure enjoyment.*
 
 ---
 
@@ -14,7 +14,7 @@
 ![PyQt6](https://img.shields.io/badge/PyQt6-6.11+-41CD52?style=for-the-badge&logo=qt&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)
-![Version](https://img.shields.io/badge/Version-1.1.0-brightgreen?style=for-the-badge)
+![Version](https://img.shields.io/badge/Version-2.0.0-brightgreen?style=for-the-badge)
 ![Stars](https://img.shields.io/github/stars/Amirmpm/golden-music?style=for-the-badge)
 
 </div>
@@ -25,20 +25,20 @@
 
 <table>
 <tr>
-<td align="center"><b>Aurora Theme</b></td>
-<td align="center"><b>Dark Gold Theme</b></td>
+<td align="center"><b>Royal Gold</b></td>
+<td align="center"><b>Porcelain White</b></td>
 </tr>
 <tr>
-<td><img src="screenshots/aurora.png" width="400" alt="Aurora Theme"></td>
-<td><img src="screenshots/dark_gold.png" width="400" alt="Dark Gold Theme"></td>
+<td><img src="screenshots/royal_gold.png" width="400" alt="Royal Gold Theme"></td>
+<td><img src="screenshots/porcelain.png" width="400" alt="Porcelain White Theme"></td>
 </tr>
 <tr>
 <td align="center"><b>Midnight Blue</b></td>
-<td align="center"><b>Ocean Cyan</b></td>
+<td align="center"><b>Neon Rose</b></td>
 </tr>
 <tr>
-<td><img src="screenshots/midnight.png" width="400" alt="Midnight Blue"></td>
-<td><img src="screenshots/ocean.png" width="400" alt="Ocean Cyan"></td>
+<td><img src="screenshots/midnight.png" width="400" alt="Midnight Blue Theme"></td>
+<td><img src="screenshots/neon_rose.png" width="400" alt="Neon Rose Theme"></td>
 </tr>
 </table>
 
@@ -47,7 +47,7 @@
 ## ✨ Features
 
 ### 🎨 Beautiful & Modern Interface
-- **14 stunning themes** — Aurora, Dark Gold, Light Gold, Midnight Blue, Forest Green, Rose Gold, Carbon Black, Ocean Cyan, Sunset Pink, Emerald, Lavender, Sand, Crimson, Teal
+- **12 psychology-driven themes** — Dark: Royal Gold · Obsidian Black · Midnight Blue · Deep Amethyst · Neon Rose · Emerald Night&nbsp;&nbsp;|&nbsp;&nbsp;Light: Porcelain White · Ivory Gold · Clear Azure · Soft Lilac · Rose Blush · Fresh Sage
 - **Modern SVG icons** — Clean Lucide/Feather-style line-art throughout
 - **Two-column layout** — Track list on the left, album art on the right
 - **Custom logo** — Golden play button branding
@@ -97,7 +97,7 @@
 - **Keyboard shortcuts** — Full control without touching the mouse
 - **Settings dialog** — 4 tabs (Appearance, Playback, Library, About)
 - **Remember last track** — Resume where you left off
-- **13 themes picker** — Visual swatch grid for instant switching
+- **12-theme picker** — DARK/LIGHT grouped swatch grid for instant switching
 
 ---
 
@@ -123,7 +123,7 @@
 ### Option 1: Download Installer (Recommended)
 
 1. Go to [Releases](../../releases)
-2. Download `GoldenMusicSetup-1.1.0.exe`
+2. Download `GoldenMusicSetup-2.0.0.exe`
 3. Run the installer — it detects an existing installation and updates in place; your library, favorites and settings are preserved
 4. Enjoy your music! 🎉
 
@@ -157,7 +157,7 @@ build_windows.bat
 
 Output:
 - `dist\GoldenMusic\GoldenMusic.exe` — The app (portable folder)
-- `dist\installer\GoldenMusicSetup-1.1.0.exe` — The installer
+- `dist\installer\GoldenMusicSetup-2.0.0.exe` — The installer
 
 ---
 
@@ -208,26 +208,36 @@ golden-music/
 
 ## 🎨 Themes
 
-Golden Music ships with **14 beautiful themes**:
+Golden Music v2.0.0 replaces the old ad-hoc palettes with a coherent,
+**color-psychology suite**: six black-dominant dark themes and six
+white-dominant light themes — monochrome plus gold, blue, purple, pink and
+green. Every palette passed WCAG contrast verification before shipping.
 
-| Theme | Style | Primary Color |
-|-------|-------|---------------|
-| Aurora | Dark | Pink/Magenta |
-| Dark Gold | Dark | Gold |
-| Light Gold | Light | Gold |
-| Midnight Blue | Dark | Blue |
-| Forest Green | Dark | Green |
-| Rose Gold | Dark | Rose |
-| Carbon Black | Dark | Silver |
-| Ocean Cyan | Dark | Cyan |
-| Sunset Pink | Dark | Pink |
-| Emerald | Dark | Emerald |
-| Lavender | Dark | Purple |
-| Sand | Light | Sand |
-| Crimson | Dark | Red |
-| Teal | Dark | Teal |
+### 🌑 Dark family (black dominant)
 
-Click the **theme icon** in the sidebar to open the visual theme picker and switch instantly.
+| Theme | Color Psychology | Accent |
+|-------|------------------|--------|
+| **Royal Gold** | Luxury, confidence — the brand signature | Champagne gold |
+| **Obsidian Black** | True rest & discipline; OLED power saving | Silver |
+| **Midnight Blue** | Depth, nocturnal calm, trust | Electric blue |
+| **Deep Amethyst** | Mystery, imagination | Vivid purple |
+| **Neon Rose** | Boldness, romance, modern energy | Hot pink |
+| **Emerald Night** | Nature, growth, tranquility | Emerald |
+
+### ☀️ Light family (white dominant)
+
+| Theme | Color Psychology | Accent |
+|-------|------------------|--------|
+| **Porcelain White** | Clarity, order, Swiss-grid focus | Graphite |
+| **Ivory Gold** | Warmth, optimism, quiet prestige | Amber gold |
+| **Clear Azure** | Trust, calm concentration | Azure blue |
+| **Soft Lilac** | Creativity, mindfulness | Violet |
+| **Rose Blush** | Compassion, playful warmth | Rose |
+| **Fresh Sage** | Balance, renewal; lowest eye strain | Sage green |
+
+Click the **theme icon** in the sidebar to open the swatch picker and switch
+instantly — or enable *Auto theme* (Settings → Appearance) and follow
+Windows' dark/light mode.
 
 ---
 

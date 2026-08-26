@@ -212,13 +212,13 @@ check("next_prev_no_playlist_safe", next_with_no_playlist)
 
 print("\n=== Config Round-Trip ===")
 def config_roundtrip():
-    w.theme_name = "midnight"
+    w.theme_name = "midnight_blue"
     w.volume_saved_marker = True
     w._save_config()
     cfg = json.loads(config_path().read_text(encoding="utf-8"))
-    assert cfg["theme"] == "midnight"
+    assert cfg["theme"] == "midnight_blue"
     assert sorted(cfg["library"]) == sorted(w.library)
-    w.theme_name = "dark"
+    w.theme_name = "royal_gold"
 check("config_save_contains_state", config_roundtrip)
 
 def tag_cache_corrupt_file_safe():
@@ -270,8 +270,8 @@ def all_themes_apply_and_persist():
         assert w.theme_name == name
         cfg = json.loads(config_path().read_text(encoding="utf-8"))
         assert cfg["theme"] == name, f"theme {name} not persisted"
-    w._on_theme_selected("dark")
-check("all_14_themes_switch_and_persist", all_themes_apply_and_persist)
+    w._on_theme_selected("royal_gold")
+check("all_12_themes_switch_and_persist", all_themes_apply_and_persist)
 
 print("\n=== Volume / Mute ===")
 def mute_unmute_restores():

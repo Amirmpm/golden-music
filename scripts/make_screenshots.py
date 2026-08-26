@@ -23,10 +23,10 @@ SHOTS.mkdir(exist_ok=True)
 
 # theme name -> output file (the four used in README.md)
 CAPTURES = [
-    ("aurora", "aurora.png"),
-    ("dark", "dark_gold.png"),
-    ("midnight", "midnight.png"),
-    ("ocean", "ocean.png"),
+    ("royal_gold", "royal_gold.png"),
+    ("porcelain", "porcelain.png"),
+    ("midnight_blue", "midnight.png"),
+    ("neon_rose", "neon_rose.png"),
 ]
 
 w = MainWindow()

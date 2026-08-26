@@ -91,17 +91,18 @@ def rapid_vols():
         s.mouseReleaseEvent(make_mouse(pos, type_=QMouseEvent.Type.MouseButtonRelease))
 check("100 rapid volume clicks", rapid_vols)
 
-print("\n=== 2. Theme Switching (all 14 themes × 3) ===")
+print("\n=== 2. Theme Switching (all 12 themes × 3) ===")
 def theme_stress():
-    themes = ["dark", "light", "midnight", "forest", "rose_gold", "carbon",
-              "ocean", "sunset", "emerald", "lavender", "sand", "crimson", "teal", "aurora"]
+    themes = ["obsidian", "royal_gold", "midnight_blue", "amethyst",
+              "neon_rose", "emerald_night", "porcelain", "ivory",
+              "azure", "lilac", "blush", "sage"]
     for _ in range(3):
         for name in themes:
             w._on_theme_selected(name)
             w.player_bar.set_theme(w.theme)
             w._apply_theme()
             app.processEvents()
-check("42 theme switches", theme_stress)
+check("36 theme switches", theme_stress)
 
 print("\n=== 3. Rapid Play/Pause/Next/Prev ===")
 def rapid_playback():
@@ -115,7 +116,7 @@ check("50 rapid playback operations", rapid_playback)
 
 print("\n=== 4. Slider + Theme Switch Together ===")
 def slider_theme_mix():
-    themes = ["dark", "light", "aurora", "ocean", "sunset"]
+    themes = ["royal_gold", "porcelain", "amethyst", "midnight_blue", "neon_rose"]
     for i in range(50):
         # Switch theme
         w._on_theme_selected(themes[i % len(themes)])
@@ -192,7 +193,7 @@ check("GC during playback", gc_stress)
 
 print("\n=== 11. Slider Drag in All Themes ===")
 def drag_all_themes():
-    themes = ["dark", "light", "aurora", "midnight", "ocean"]
+    themes = ["royal_gold", "porcelain", "amethyst", "midnight_blue", "neon_rose"]
     for name in themes:
         w._on_theme_selected(name)
         s = w.player_bar.seek_slider

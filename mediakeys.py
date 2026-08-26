@@ -5,10 +5,22 @@ Registers the standard multimedia hotkeys (Play/Pause, Stop, Next, Prev)
 with RegisterHotKey and translates the WM_HOTKEY messages into Qt signals
 via a native event filter. Works with keyboard media keys and most headset
 controls. Degrades silently when a key is already claimed by another app.
+
+PyQt6 notes (why this class looks unusual):
+1. PyQt6 delivers `message` to nativeEventFilter() as a raw sip.voidptr —
+   it exposes NO `.message` / `.wParam` attributes. We must cast the
+   address to a real MSG structure with ctypes.
+2. QAbstractNativeEventFilter is NOT a QObject subclass in PyQt6, so
+   pyqtSignal attributes on it can never connect or emit. The signals
+   therefore live on a tiny QObject sidecar; the filter forwards the
+   parsed hotkey id to it.
 """
+import ctypes
 import logging
 
-from PyQt6.QtCore import QAbstractNativeEventFilter, QObject, pyqtSignal
+from PyQt6.QtCore import (
+    QAbstractNativeEventFilter, QObject, pyqtSignal
+)
 
 log = logging.getLogger("app.mediakeys")
 
@@ -21,6 +33,24 @@ try:
 except ImportError:
     HAVE_WIN32 = False
 
+# Windows MSG structure — needed to decode the raw native event pointer.
+# Prefer the canonical wintypes layout; fall back to an identical manual
+# definition for environments where ctypes.wintypes is unavailable.
+try:
+    import ctypes.wintypes as _wintypes
+    _MSG = _wintypes.MSG
+except Exception:                                    # pragma: no cover
+    class _MSG(ctypes.Structure):
+        _fields_ = [
+            ("hwnd", ctypes.c_void_p),
+            ("message", ctypes.c_uint),
+            ("wParam", ctypes.c_size_t),     # WPARAM  = UINT_PTR
+            ("lParam", ctypes.c_ssize_t),    # LPARAM  = LONG_PTR
+            ("time", ctypes.c_uint),
+            ("pt_x", ctypes.c_long),
+            ("pt_y", ctypes.c_long),
+        ]
+
 # Virtual-key codes for standard media keys
 VK_MEDIA_PLAY_PAUSE = 0xB3
 VK_MEDIA_STOP = 0xB2
@@ -31,18 +61,45 @@ _HOTKEY_ID_BASE = 0xB00F  # arbitrary app-local range
 _THREAD_MESSAGE = 0x0312  # WM_HOTKEY
 
 
-class MediaKeyFilter(QAbstractNativeEventFilter):
-    """Installs Windows media hotkeys; emits Qt signals on press."""
+class _MediaKeyEmitter(QObject):
+    """QObject sidecar that actually owns the hotkey signals."""
 
     play_pause = pyqtSignal()
     stop = pyqtSignal()
     next = pyqtSignal()
     prev = pyqtSignal()
 
+
+class MediaKeyFilter(QAbstractNativeEventFilter):
+    """Installs Windows media hotkeys; emits Qt signals on press.
+
+    Connect to the play_pause / stop / next / prev bound signals exposed
+    as properties — e.g. ``filter.play_pause.connect(handler)``.
+    """
+
     def __init__(self):
         super().__init__()
         self._registered = False
+        self._emitter = _MediaKeyEmitter()
 
+    # -- signal surface (bound Signal objects: support connect & emit) ---
+    @property
+    def play_pause(self):
+        return self._emitter.play_pause
+
+    @property
+    def stop(self):
+        return self._emitter.stop
+
+    @property
+    def next(self):
+        return self._emitter.next
+
+    @property
+    def prev(self):
+        return self._emitter.prev
+
+    # -- hotkey registration --------------------------------------------
     def install(self) -> bool:
         if not HAVE_WIN32:
             log.info("Media keys unavailable (pywin32 not installed)")
@@ -79,20 +136,35 @@ class MediaKeyFilter(QAbstractNativeEventFilter):
                 pass
         self._registered = False
 
+    # -- native message pump --------------------------------------------
     def nativeEventFilter(self, event_type, message):
-        """Translate WM_HOTKEY thread messages into signals."""
+        """Translate WM_HOTKEY thread messages into signals.
+
+        `message` arrives as sip.voidptr (a plain address in PyQt6); cast
+        it to a MSG struct before touching any fields.
+        """
         try:
-            if int(message.message) == _THREAD_MESSAGE:
-                hotkey_id = int(message.wParam)
-                offset = hotkey_id - _HOTKEY_ID_BASE
-                if offset == 0:
-                    self.play_pause.emit()
-                elif offset == 1:
-                    self.stop.emit()
-                elif offset == 2:
-                    self.next.emit()
-                elif offset == 3:
-                    self.prev.emit()
+            try:
+                et = bytes(event_type)
+            except Exception:
+                et = b""
+            if et and et != b"windows_generic_MSG":
+                return False, 0
+            addr = int(message)
+            if not addr:
+                return False, 0
+            msg = _MSG.from_address(addr)
+            if int(msg.message) != _THREAD_MESSAGE:
+                return False, 0
+            offset = int(msg.wParam) - _HOTKEY_ID_BASE
+            if offset == 0:
+                self._emitter.play_pause.emit()
+            elif offset == 1:
+                self._emitter.stop.emit()
+            elif offset == 2:
+                self._emitter.next.emit()
+            elif offset == 3:
+                self._emitter.prev.emit()
         except Exception:
             pass  # never break the event loop from a message hook
         return False, 0
