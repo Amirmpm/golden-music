@@ -65,6 +65,8 @@ logs/
 goldenmusic_config.json
 *.local.json
 config.json
+tag_cache.json
+backups/
 
 # Test artifacts
 .pytest_cache/
@@ -92,3 +94,6 @@ instance.lock
 
 # Release build output
 build_release_output/
+
+# Screenshot tooling scratch
+scripts/_grid_preview.png

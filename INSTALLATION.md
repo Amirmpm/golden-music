@@ -9,8 +9,8 @@ This guide covers all the ways to install and run Golden Music on Windows.
 ### Download the Installer
 
 1. Go to [Releases](../../releases)
-2. Download `GoldenMusicSetup-1.0.0.exe`
-3. Run the installer
+2. Download `GoldenMusicSetup-2.0.1.exe`
+3. Run the installer — it detects an existing installation and updates in place; your library, favorites and settings are preserved
 4. Follow the setup wizard
 5. Launch Golden Music from the Start Menu or Desktop shortcut
 
@@ -22,9 +22,9 @@ This guide covers all the ways to install and run Golden Music on Windows.
 
 ### Prerequisites
 
-#### 1. Python 3.14 or later
+#### 1. Python 3.11 or later
 
-Golden Music requires **Python 3.14+** (also works with 3.11–3.13).
+Golden Music requires **Python 3.11+** (tested with 3.11–3.14).
 
 - Download: [python.org/downloads](https://www.python.org/downloads/)
 - During installation, **check "Add Python to PATH"**
@@ -32,7 +32,7 @@ Golden Music requires **Python 3.14+** (also works with 3.11–3.13).
 Verify installation:
 ```bash
 python --version
-# Should print: Python 3.14.x
+# Should print: Python 3.11.x or later
 ```
 
 #### 2. Inno Setup 6 (for building the installer)
@@ -47,7 +47,7 @@ python --version
 
 1. **Download or clone the source code:**
    ```bash
-   git clone https://github.com/yourusername/golden-music.git
+   git clone https://github.com/Amirmpm/golden-music.git
    cd golden-music
    ```
 
@@ -67,10 +67,10 @@ python --version
 5. **Find the output:**
    ```
    dist\GoldenMusic\GoldenMusic.exe         # The app
-   dist\installer\GoldenMusicSetup-1.0.0.exe # The installer
+   dist\installer\GoldenMusicSetup-2.0.1.exe # The installer
    ```
 
-6. **Run the installer** (`GoldenMusicSetup-1.0.0.exe`) to install properly.
+6. **Run the installer** (`GoldenMusicSetup-2.0.1.exe`) to install properly.
 
 ---
 
@@ -81,6 +81,7 @@ If you want to run Golden Music without building an installer:
 1. **Install dependencies:**
    ```bash
    pip install -r requirements.txt
+   pip install pywin32   # media keys + single-instance on Windows
    ```
 
 2. **Run:**
@@ -105,20 +106,22 @@ golden-music\
 │   │   │   └── logo.png
 │   │   ├── PyQt6\
 │   │   │   └── Qt6\
-│   │   │       └── plugins\
-│   │   │           ├── mediaservice\    # Audio backend
-│   │   │           ├── iconengines\     # SVG rendering
-│   │   │           ├── imageformats\    # Cover art
-│   │   │           ├── platforms\
-│   │   │           ├── styles\
-│   │   │           └── audio\
+│   │   │       └── bin\
 │   │   └── _internal\
+│   │       └── PyQt6\
+│   │           └── Qt6\
+│   │               └── plugins\
+│   │                   ├── mediaservice\    # Audio backend (FFmpeg stack)
+│   │                   ├── iconengines\     # SVG rendering
+│   │                   ├── imageformats\    # Cover art
+│   │                   ├── platforms\
+│   │                   └── styles\
 │   └── installer\
-│       └── GoldenMusicSetup-1.0.0.exe   # The installer
+│       └── GoldenMusicSetup-2.0.1.exe      # The installer
 └── ...
 ```
 
-**If `dist\GoldenMusic\PyQt6\Qt5\plugins\mediaservice\` is missing or empty, audio playback won't work.** Re-run the build.
+**If `dist\GoldenMusic\_internal\PyQt6\Qt6\plugins\mediaservice\` is missing or empty, audio playback won't work.** Re-run the build.
 
 ---
 
@@ -184,10 +187,16 @@ Golden Music stores its data at:
 ```
 %USERPROFILE%\.goldenmusic\
 ├── config.json          # Settings, library, favorites
-└── tag_cache.json       # Cached metadata
+├── tag_cache.json       # Cached metadata for instant loading
+├── stats.json           # Listening statistics
+├── backups/             # Automatic config backups on startup
+└── goldenmusic.log      # Rotating diagnostics log
 ```
 
 **To reset to defaults:** Delete this folder and restart the app.
+
+*Portable mode:* if a `goldenmusic_config.json` sits next to the executable
+(or `main.py`), the app stores everything in that folder instead.
 
 ---
 

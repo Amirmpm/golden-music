@@ -4,18 +4,17 @@
 
 # 🎵 Golden Music
 
-### A beautiful, modern music player for Windows
+### The modern Windows music player that stays out of your way
 
-*Listen to your music in style — 12 psychology-driven themes, zero clutter, pure enjoyment.*
+*12 psychology-driven themes · Smart shuffle · Glass tray popup · Zero clutter*
 
----
-
-![Python](https://img.shields.io/badge/Python-3.14+-3776AB?style=for-the-badge&logo=python&logoColor=white)
-![PyQt6](https://img.shields.io/badge/PyQt6-6.11+-41CD52?style=for-the-badge&logo=qt&logoColor=white)
-![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white)
-![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)
-![Version](https://img.shields.io/badge/Version-2.0.0-brightgreen?style=for-the-badge)
-![Stars](https://img.shields.io/github/stars/Amirmpm/golden-music?style=for-the-badge)
+[![Version](https://img.shields.io/badge/Version-2.0.1-brightgreen?style=for-the-badge)](../../releases)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![PyQt6](https://img.shields.io/badge/PyQt6-6.11+-41CD52?style=for-the-badge&logo=qt&logoColor=white)](https://www.riverbankcomputing.com/software/pyqt/)
+[![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white)](#)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
+[![CI](https://img.shields.io/badge/CI-passing-success?style=for-the-badge)](.github/workflows/ci.yml)
+[![Stars](https://img.shields.io/github/stars/Amirmpm/golden-music?style=for-the-badge)](../../stargazers)
 
 </div>
 
@@ -23,81 +22,133 @@
 
 ## 📸 Screenshots
 
+Every theme pairs a dark shot with its light twin — six matched duos:
+
 <table>
 <tr>
-<td align="center"><b>Royal Gold</b></td>
-<td align="center"><b>Porcelain White</b></td>
+<td align="center"><b>👑 Royal Gold</b></td>
+<td align="center"><b>🏺 Ivory Gold</b></td>
 </tr>
 <tr>
 <td><img src="screenshots/royal_gold.png" width="400" alt="Royal Gold Theme"></td>
-<td><img src="screenshots/porcelain.png" width="400" alt="Porcelain White Theme"></td>
+<td><img src="screenshots/ivory.png" width="400" alt="Ivory Gold Theme"></td>
 </tr>
 <tr>
-<td align="center"><b>Midnight Blue</b></td>
-<td align="center"><b>Neon Rose</b></td>
+<td align="center"><b>🌙 Midnight Blue</b></td>
+<td align="center"><b>☀️ Clear Azure</b></td>
 </tr>
 <tr>
-<td><img src="screenshots/midnight.png" width="400" alt="Midnight Blue Theme"></td>
+<td><img src="screenshots/midnight_blue.png" width="400" alt="Midnight Blue Theme"></td>
+<td><img src="screenshots/azure.png" width="400" alt="Clear Azure Theme"></td>
+</tr>
+<tr>
+<td align="center"><b>🔮 Deep Amethyst</b></td>
+<td align="center"><b>💜 Soft Lilac</b></td>
+</tr>
+<tr>
+<td><img src="screenshots/amethyst.png" width="400" alt="Deep Amethyst Theme"></td>
+<td><img src="screenshots/lilac.png" width="400" alt="Soft Lilac Theme"></td>
+</tr>
+<tr>
+<td align="center"><b>🌹 Neon Rose</b></td>
+<td align="center"><b>🌸 Rose Blush</b></td>
+</tr>
+<tr>
 <td><img src="screenshots/neon_rose.png" width="400" alt="Neon Rose Theme"></td>
+<td><img src="screenshots/blush.png" width="400" alt="Rose Blush Theme"></td>
+</tr>
+<tr>
+<td align="center"><b>🌲 Emerald Night</b></td>
+<td align="center"><b>🌿 Fresh Sage</b></td>
+</tr>
+<tr>
+<td><img src="screenshots/emerald_night.png" width="400" alt="Emerald Night Theme"></td>
+<td><img src="screenshots/sage.png" width="400" alt="Fresh Sage Theme"></td>
+</tr>
+<tr>
+<td align="center"><b>🖤 Obsidian Black</b></td>
+<td align="center"><b>🤍 Porcelain White</b></td>
+</tr>
+<tr>
+<td><img src="screenshots/obsidian.png" width="400" alt="Obsidian Black Theme"></td>
+<td><img src="screenshots/porcelain.png" width="400" alt="Porcelain White Theme"></td>
 </tr>
 </table>
 
+*All twelve themes, captured live from the app. Click any screenshot for the full-size view.*
+
 ---
 
-## ✨ Features
+## ✨ Highlights
 
-### 🎨 Beautiful & Modern Interface
-- **12 psychology-driven themes** — Dark: Royal Gold · Obsidian Black · Midnight Blue · Deep Amethyst · Neon Rose · Emerald Night&nbsp;&nbsp;|&nbsp;&nbsp;Light: Porcelain White · Ivory Gold · Clear Azure · Soft Lilac · Rose Blush · Fresh Sage
-- **Modern SVG icons** — Clean Lucide/Feather-style line-art throughout
-- **Two-column layout** — Track list on the left, album art on the right
-- **Custom logo** — Golden play button branding
-- **System tray integration** — Minimize to tray, quick controls
+### 🎨 A theme for every mood — built on color psychology
 
-### 🎵 Powerful Playback
-- **All popular formats** — MP3, WAV, FLAC, OGG, OGA, Opus, M4A, AAC, WMA
-- **Windows Media Foundation / FFmpeg** backends for superior audio quality
-- **Click-to-seek** progress bar — Jump anywhere instantly
-- **Smooth volume control** — Click or drag, with mute memory
-- **Shuffle & Repeat** — Off / All / One modes
-- **History-aware shuffle** — Previous retraces the actual listening path; Next replays forward after going back
-- **Global media keys** — Play/Pause/Stop/Next/Prev from keyboard or headset
-- **Album cover art** — Extracted automatically from file metadata
+**Six dark themes** (black-dominant, OLED-friendly) and **six light themes**
+(white-dominant, high readability), each pairing a monochrome base with one
+accent hue — gold, blue, purple, pink, green or pure silver/graphite. Every
+palette was contrast-checked so text stays readable on both OS dark and light
+mode.
 
-### 📚 Smart Library Management
-- **Add folders** with recursive subfolder scanning
-- **Full folder tree** — Every nesting level shown and filterable
-- **Personal playlists** — Create, rename, delete; add tracks via right-click
-- **Duplicate finder** — Groups same-song copies; keep one, remove the rest (files on disk untouched)
-- **Instant search** — Filter by title or artist
-- **Sort by** Title, Artist, Date Added, or Filename
-- **Jump to Playing** (`Ctrl+J`) — Scroll the list to the current track
-- **Drag & drop** — Drop folders or audio files from Explorer to add them
-- **Track properties** — Format, duration, bitrate, sample rate, size + "Open File Location"
-- **Right-click context menu** — Play, Favorites, Playlists, Remove, Properties
-- **Refresh button** — Rescan folders for new or removed tracks
-- **Auto-rescan** on startup (configurable)
-- **Tag caching** — Instant loading on subsequent launches
+| 🌑 Dark | ☀️ Light |
+|---|---|
+| **Royal Gold** — luxury, confidence | **Ivory Gold** — warmth, quiet prestige |
+| **Midnight Blue** — nocturnal calm, trust | **Clear Azure** — trust, concentration |
+| **Deep Amethyst** — mystery, imagination | **Soft Lilac** — creativity, mindfulness |
+| **Neon Rose** — bold, modern energy | **Rose Blush** — compassion, playfulness |
+| **Emerald Night** — nature, tranquility | **Fresh Sage** — balance, lowest eye strain |
+| **Obsidian Black** — rest & discipline | **Porcelain White** — clarity, Swiss-grid focus |
 
-### 🛡️ Reliability
-- **Single-instance** — Launching again focuses the running window instead of erroring
-- **Crash guard** — Unexpected exceptions are logged, the app keeps running
-- **Rotating file log** — Diagnostics written next to the config (`~/.goldenmusic/goldenmusic.log`)
-- **Validated config loading** — Corrupted settings files never crash startup
+The **brush button** in the sidebar opens a grouped DARK/LIGHT swatch picker,
+or enable *Auto theme* (Settings → Interface) to follow Windows' dark/light
+mode automatically.
 
-### ⚡ Performance & Stability
-- **Async everything** — No UI freeze, even with 2000+ songs
-- **Background tag loading** — Library appears instantly, tags load progressively
-- **Progress bars** for all heavy operations
-- **Crash-proof** — Every operation wrapped in error handling
-- **Memory efficient** — Cached data with automatic cleanup
+### 🎵 Playback that feels right
 
-### 🎯 User Experience
-- **Mini Player** — Compact floating window (`Ctrl+M`)
-- **Sleep Timer** — Auto-stop after N minutes
-- **Keyboard shortcuts** — Full control without touching the mouse
-- **Settings dialog** — 4 tabs (Appearance, Playback, Library, About)
-- **Remember last track** — Resume where you left off
-- **12-theme picker** — DARK/LIGHT grouped swatch grid for instant switching
+- **All popular formats** — MP3, WAV, FLAC, OGG, OGA, Opus, M4A, AAC, WMA (FFmpeg-backed)
+- **Smart shuffle** — tracks you haven't played this session come first; everything gets a turn before anything repeats
+- **History-aware Previous** — in shuffle mode, Previous retraces the *actual* listening path instead of picking a new random track
+- **A-B Repeat & Playback Speed** (0.5×–2×) tucked into the tidy **⋯ menu**
+- **Click-to-seek and drag-to-seek** progress bar with live time preview
+- **Smooth volume fades** on pause and track change (configurable)
+- **Global media keys** — Play/Pause/Stop/Next/Prev from your keyboard or headset
+- **Sleep timer** — stop playback after N minutes
+- **Album cover art** — extracted automatically from file metadata
+
+### 🧩 A redesigned player bar
+
+The control cluster was decluttered: shuffle, lyrics, repeat and volume stay
+on the bar; less-used actions (A-B repeat, speed, track options) live behind
+the **⋯** button. Two-line track rows (bold title over muted artist) read
+like modern streaming apps, and the playing row glows gold.
+
+### 🛞 A tray popup that actually works
+
+Right-click the tray icon for a **glassy now-playing popup**: live cover art,
+title & artist, prev / play-pause / next that stay in sync with playback, and
+Show / Quit / **Close** buttons — always positioned exactly above the
+taskbar, never hidden behind it. Optionally, clicking the taskbar icon sends
+the window to the tray instead of minimizing (Settings → Interface).
+
+### 📚 Smart library
+
+- **Add folders** with recursive scanning; a filterable folder tree sidebar
+- **Albums grid** — covers grouped by album, built from the tag cache with a loading overlay (no UI freeze)
+- **Personal playlists** — create, rename, delete; add via right-click
+- **Duplicate finder** — review and clean copies without touching files on disk
+- **Two-line track lists** with background tag loading (instant first paint)
+- **Instant search**, sort by title / artist / date added / filename
+- **Drag & drop** folders or files from Explorer
+- **Track properties** — format, duration, bitrate, sample rate + Open File Location
+- **Listening stats** — total time & top artists, auto-refreshed every minute
+- **Tag editing** — fix title / artist / album / year / genre and the cover in-app
+
+### 🛡️ Reliability by design
+
+- **Single-instance** — relaunching focuses the running window
+- **Crash guard** — unexpected exceptions are logged, the app keeps running
+- **Rotating file log** at `~/.goldenmusic/goldenmusic.log`
+- **Validated config loading** — corrupted settings never crash startup
+- **Async everything** — background scanning, tag loading and cover art; no UI freezes even with 2000+ tracks
 
 ---
 
@@ -123,7 +174,7 @@
 ### Option 1: Download Installer (Recommended)
 
 1. Go to [Releases](../../releases)
-2. Download `GoldenMusicSetup-2.0.0.exe`
+2. Download `GoldenMusicSetup-2.0.1.exe`
 3. Run the installer — it detects an existing installation and updates in place; your library, favorites and settings are preserved
 4. Enjoy your music! 🎉
 
@@ -134,8 +185,11 @@
 git clone https://github.com/Amirmpm/golden-music.git
 cd golden-music
 
-# Install dependencies (pywin32 adds media keys + single-instance on Windows)
-pip install -r requirements.txt pywin32
+# Install dependencies
+pip install -r requirements.txt
+
+# On Windows, pywin32 adds media keys + single-instance
+pip install pywin32
 
 # Run
 python main.py
@@ -144,11 +198,11 @@ python main.py
 ### Option 3: Build the Portable exe / Installer Yourself
 
 **Prerequisites:**
-- [Python 3.12+](https://www.python.org/downloads/)
+- [Python 3.11+](https://www.python.org/downloads/)
 - [Inno Setup 6](https://jrsoftware.org/isdl.php) (installer only)
 
 ```bash
-# Optimized portable build only (~80 MB, trims unused Qt DLLs, UPX-packed)
+# Optimized portable build only (~84 MB, trims unused Qt DLLs, UPX-packed)
 python build_release.py
 
 # Full pipeline: tests -> exe -> installer
@@ -157,7 +211,7 @@ build_windows.bat
 
 Output:
 - `dist\GoldenMusic\GoldenMusic.exe` — The app (portable folder)
-- `dist\installer\GoldenMusicSetup-2.0.0.exe` — The installer
+- `dist\installer\GoldenMusicSetup-2.0.1.exe` — The installer
 
 ---
 
@@ -165,39 +219,42 @@ Output:
 
 ```
 golden-music/
-├── main.py                  # Main application window
-├── config.py                # Themes, QSS stylesheets, safe loaders
+├── main.py                  # Main window, library, player bar, rail, pages
+├── config.py                # 12 themes, QSS builder, safe config loaders
+├── audio.py                 # QMediaPlayer audio backend
+├── audio_output.py          # Audio output device enumeration/switching
+├── playback_fx.py           # Speed, A-B repeat, volume fades
+├── playstats.py             # Listening statistics engine
 ├── applog.py                # Rotating file logging + Qt message hook
 ├── mediakeys.py             # Global Windows media key hotkeys
 ├── trackinfo.py             # Track technical metadata reader
 ├── track_info_dialog.py     # Properties dialog + Open File Location
+├── tag_editor.py            # Real tag editor — writes metadata to audio files
 ├── playlist_dialog.py       # Personal playlists UI + store
 ├── duplicates.py            # Duplicate grouping engine
 ├── duplicates_dialog.py     # Duplicates review/cleanup dialog
-├── icons.py                 # SVG icon library (30+ icons)
-├── audio.py                 # PyQt6 QMediaPlayer audio backend
+├── icons.py                 # File-based Lucide SVG icon library
 ├── scanner.py               # Async folder scanner (QThread)
-├── coverart.py              # Album art extraction (thread-safe)
+├── coverart.py              # Album art extraction (thread-safe cache)
 ├── widgets.py               # ClickableSlider widget
-├── tray_menu.py             # Custom tray popup menu
-├── theme_picker.py          # Theme swatch picker popup
-├── settings_dialog.py       # Settings dialog (4 tabs)
+├── tray_menu.py             # Glass tray popup (now playing + controls)
+├── theme_picker.py          # DARK/LIGHT grouped theme swatches
+├── settings_dialog.py       # Settings dialog (Appearance/Playback/Library/About)
 ├── mini_player.py           # Compact floating player
-├── scripts/                 # 7 offline test suites (106 tests)
+├── queue_panel.py           # Up-next queue panel
+├── lyrics.py / lyrics_panel.py  # Lyrics fetch + side panel
+├── autottheme.py            # Windows dark/light auto-theme watcher
+├── userbackup.py            # Config backup/restore
+├── scripts/                 # Offline test & tooling suites
 ├── requirements.txt         # Python dependencies
 ├── goldenmusic.spec         # PyInstaller spec (optimized)
 ├── goldenmusic.iss          # Inno Setup installer script
 ├── build_release.py         # Optimized exe build + trim + size report
 ├── build_windows.bat        # One-click: tests -> exe -> installer
 ├── .github/workflows/       # CI: tests + Bandit + build artifacts
-├── assets/                  # Icons, logos, images
-│   ├── logo.png             # Custom app logo
-│   ├── icon.png             # App icon (512x512)
-│   ├── icon.ico             # Windows icon (multi-size)
-│   └── icon_*.png           # Various sizes
+├── assets/                  # App icon, logo, Lucide SVG icon set
 ├── screenshots/             # App screenshots for README
 ├── LICENSE                  # MIT License
-├── README.md                # This file
 ├── CONTRIBUTING.md          # Contribution guidelines
 ├── CHANGELOG.md             # Version history
 ├── INSTALLATION.md          # Detailed installation guide
@@ -206,37 +263,17 @@ golden-music/
 
 ---
 
-## 🎨 Themes
+## 🎨 Themes in depth
 
-Golden Music v2.0.0 replaces the old ad-hoc palettes with a coherent,
+Golden Music v2.0 replaces ad-hoc palettes with a coherent,
 **color-psychology suite**: six black-dominant dark themes and six
 white-dominant light themes — monochrome plus gold, blue, purple, pink and
-green. Every palette passed WCAG contrast verification before shipping.
+green. Every palette passed WCAG contrast verification before shipping, and
+light themes were overhauled in v2.0.1 to stay readable even when Windows
+itself runs in the opposite mode (tooltips, dialogs, tray popup, stats page).
 
-### 🌑 Dark family (black dominant)
-
-| Theme | Color Psychology | Accent |
-|-------|------------------|--------|
-| **Royal Gold** | Luxury, confidence — the brand signature | Champagne gold |
-| **Obsidian Black** | True rest & discipline; OLED power saving | Silver |
-| **Midnight Blue** | Depth, nocturnal calm, trust | Electric blue |
-| **Deep Amethyst** | Mystery, imagination | Vivid purple |
-| **Neon Rose** | Boldness, romance, modern energy | Hot pink |
-| **Emerald Night** | Nature, growth, tranquility | Emerald |
-
-### ☀️ Light family (white dominant)
-
-| Theme | Color Psychology | Accent |
-|-------|------------------|--------|
-| **Porcelain White** | Clarity, order, Swiss-grid focus | Graphite |
-| **Ivory Gold** | Warmth, optimism, quiet prestige | Amber gold |
-| **Clear Azure** | Trust, calm concentration | Azure blue |
-| **Soft Lilac** | Creativity, mindfulness | Violet |
-| **Rose Blush** | Compassion, playful warmth | Rose |
-| **Fresh Sage** | Balance, renewal; lowest eye strain | Sage green |
-
-Click the **theme icon** in the sidebar to open the swatch picker and switch
-instantly — or enable *Auto theme* (Settings → Appearance) and follow
+Click the **brush icon** in the sidebar to open the swatch picker and switch
+instantly — or enable *Auto theme* (Settings → Interface) and follow
 Windows' dark/light mode.
 
 ---
@@ -245,7 +282,7 @@ Windows' dark/light mode.
 
 | Technology | Purpose |
 |------------|---------|
-| ![Python](https://img.shields.io/badge/Python-3.14+-3776AB) | Core language |
+| ![Python](https://img.shields.io/badge/Python-3.11+-3776AB) | Core language |
 | ![PyQt6](https://img.shields.io/badge/PyQt6-6.11+-41CD52) | GUI framework |
 | ![mutagen](https://img.shields.io/badge/mutagen-1.47+-blue) | Audio metadata |
 | ![PyInstaller](https://img.shields.io/badge/PyInstaller-6.10+-red) | EXE packaging |
@@ -260,11 +297,18 @@ Golden Music stores its configuration at:
 ```
 %USERPROFILE%\.goldenmusic\
 ├── config.json          # App settings, library, favorites
-└── tag_cache.json       # Cached metadata for instant loading
+├── tag_cache.json       # Cached metadata for instant loading
+├── stats.json           # Listening statistics
+├── backups/             # Automatic config backups on startup
+└── goldenmusic.log      # Rotating diagnostics log
 ```
 
+*Portable mode:* if a `goldenmusic_config.json` sits next to the executable
+(or `main.py`), the app stores everything in that folder instead — handy for
+USB-stick installs.
+
 **What's stored:**
-- Added folders, library tracks, favorites
+- Added folders, library tracks, favorites, playlists
 - Last played track and position
 - Volume, theme, shuffle/repeat state
 - Window geometry
@@ -278,126 +322,25 @@ Golden Music stores its configuration at:
 
 Golden Music is an open-source project and we'd love your help to make it even better. Whether you're a developer, designer, translator, or just have a great idea — there's a place for you here.
 
-### Ways to Contribute
+- 🐛 [Report bugs](../../issues/new?template=bug_report.md)
+- 💡 [Suggest features](../../issues/new?template=feature_request.md)
+- 🔧 [Submit pull requests](CONTRIBUTING.md)
+- ⭐ Star the repo if you find it useful!
 
-- 🐛 **Report bugs** — Found a bug? [Open an issue](../../issues/new)
-- 💡 **Suggest features** — Have an idea? [Let us know](../../issues/new)
-- 🎨 **Design themes** — Create new color themes
-- 🌍 **Translate** — Help translate the UI
-- 📝 **Improve docs** — Fix typos, add guides
-- 🔧 **Submit code** — Fix bugs, add features via Pull Request
-
-### How to Contribute
-
-1. **Fork** the repository
-2. **Clone** your fork:
-   ```bash
-   git clone https://github.com/Amirmpm/golden-music.git
-   ```
-3. **Create a branch**:
-   ```bash
-   git checkout -b feature/my-awesome-feature
-   ```
-4. **Make your changes** and test them
-5. **Commit** with a clear message:
-   ```bash
-   git commit -m "feat: add awesome new feature"
-   ```
-6. **Push** to your fork:
-   ```bash
-   git push origin feature/my-awesome-feature
-   ```
-7. **Open a Pull Request** 🚀
-
-### 📋 Requesting a Version Upgrade
-
-Want a new feature or improvement in the next version? Here's how:
-
-1. **Check existing issues** — Someone may have already requested it
-2. **Open a new issue** with the label `enhancement` or `feature-request`
-3. **Describe clearly** what you'd like and why it's useful
-4. **Upvote** existing requests with 👍
-
-We review all requests and prioritize based on community interest and feasibility.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ---
 
-## 📝 License
+## 📄 License
 
-This project is licensed under the **MIT License** — see [LICENSE](LICENSE) for details.
-
-```
-MIT License
-
-Copyright (c) 2026 Golden Music
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files...
-```
-
-**In short:** You're free to use, modify, distribute, and even sell this software. Just keep the copyright notice.
-
----
-
-## 🙏 Acknowledgments
-
-This project stands on the shoulders of giants:
-
-- **[PyQt6](https://www.riverbankcomputing.com/software/pyqt/)** — by Riverbank Computing
-- **[mutagen](https://mutagen.readthedocs.io/)** — Audio metadata library
-- **[Lucide](https://lucide.dev/)** — Icon design inspiration
-- **[Inno Setup](https://jrsoftware.org/isinfo.php)** — by Jordan Russell
-- **[Python](https://www.python.org/)** — The language that makes it all possible
-
----
-
-## 📊 Project Stats
-
-![GitHub stars](https://img.shields.io/github/stars/Amirmpm/golden-music?style=social)
-![GitHub forks](https://img.shields.io/github/forks/Amirmpm/golden-music?style=social)
-![GitHub issues](https://img.shields.io/github/issues/Amirmpm/golden-music)
-![GitHub downloads](https://img.shields.io/github/downloads/Amirmpm/golden-music/total)
-![GitHub last commit](https://img.shields.io/github/last-commit/Amirmpm/golden-music)
-
----
-
-## 🗺️ Roadmap
-
-### Version 1.x
-- [ ] Equalizer (10-band)
-- [ ] Crossfade between tracks
-- [ ] System media key integration
-- [ ] Playlist management (custom playlists)
-- [ ] Lyrics display
-
-### Version 2.x
-- [ ] Multi-language support
-- [ ] Cloud sync for favorites
-- [ ] Podcast support
-- [ ] Theme editor
-- [ ] Mobile companion app
-
-*Have an idea for the roadmap? [Suggest it!](../../issues/new)*
-
----
-
-## 💬 Community
-
-- 🐛 [Report a Bug](../../issues/new?labels=bug)
-- 💡 [Request a Feature](../../issues/new?labels=enhancement)
-- 💬 [Start a Discussion](../../discussions)
-- 📧 Contact: [Open an issue](../../issues/new)
+This project is licensed under the MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
 <div align="center">
 
-### ⭐ If you like Golden Music, give it a star! ⭐
+**Made with 🎵 and ❤️ for Windows**
 
-**Made with ❤️ and lots of ☕**
-
-*First public release — Version 1.0.0*
+⭐ Star this repo if Golden Music makes your listening better!
 
 </div>

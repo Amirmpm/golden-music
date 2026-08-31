@@ -731,19 +731,28 @@ class TrackRowDelegate(QStyledItemDelegate):
         x_num = rect.left() + 8
         x_text = x_num + (34 if number else 0)
 
+        # Base font — resolve first so pointSizeF() is never -1 (unset),
+        # then clamp every derived size to a sane positive minimum.
+        base = QFont(option.font)
+        base.resolve(QFont().resolve())
+        base_size = base.pointSizeF()
+        if base_size <= 0:
+            base_size = 9.0
+            base.setPointSizeF(base_size)
+
         # Index number (small, muted/gold)
         if number:
-            f_num = QFont(option.font)
-            f_num.setPointSizeF(max(8.5, option.font.pointSizeF() - 1.5))
+            f_num = QFont(base)
+            f_num.setPointSizeF(max(8.5, base_size - 1.5))
             p.setFont(f_num)
             p.setPen(QPen(num_col))
             p.drawText(QRect(x_num, rect.top(), 30, rect.height()),
                        int(Qt.AlignmentFlag.AlignVCenter), str(number))
 
         # Title line
-        f_title = QFont(option.font)
+        f_title = QFont(base)
         f_title.setBold(True)
-        f_title.setPointSizeF(option.font.pointSizeF() + 0.5)
+        f_title.setPointSizeF(max(8.5, base_size + 0.5))
         p.setFont(f_title)
         p.setPen(QPen(title_col))
         fm = QFontMetrics(f_title)
@@ -754,8 +763,8 @@ class TrackRowDelegate(QStyledItemDelegate):
 
         # Artist line (muted, smaller) — only when present
         if artist:
-            f_artist = QFont(option.font)
-            f_artist.setPointSizeF(max(8.5, option.font.pointSizeF() - 2))
+            f_artist = QFont(base)
+            f_artist.setPointSizeF(max(8.5, base_size - 2))
             p.setFont(f_artist)
             p.setPen(QPen(QColor(t["muted"])))
             fm_a = QFontMetrics(f_artist)

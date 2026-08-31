@@ -46,7 +46,7 @@ Fix bugs, add features, optimize performance.
 ## 🚀 Getting Started for Developers
 
 ### Prerequisites
-- Python 3.14 or higher
+- Python 3.11 or higher
 - Git
 - A code editor (VS Code, PyCharm, etc.)
 
@@ -89,8 +89,8 @@ Fix bugs, add features, optimize performance.
 1. **Make your changes** following the code style below
 2. **Test your changes** thoroughly:
    ```bash
-   python scripts/test_v3.py        # Functional tests
-   python scripts/test_crash.py     # Crash tests
+   python scripts/test_functional.py  # Functional tests
+   python scripts/test_crash.py       # Crash tests
    ```
 3. **Commit** with a clear message (see convention below)
 4. **Push** to your fork
@@ -171,8 +171,8 @@ If applicable, add screenshots.
 
 **Environment:**
 - OS: Windows 11
-- Python version: 3.14.0
-- Golden Music version: 1.0.0
+- Python version: 3.11.0
+- Golden Music version: 2.0.1
 - How did you install: [installer / from source]
 ```
 
@@ -202,7 +202,7 @@ Before submitting a Pull Request, please test:
 
 ```bash
 # Run functional tests
-python scripts/test_v3.py
+python scripts/test_functional.py
 
 # Run crash tests
 python scripts/test_crash.py

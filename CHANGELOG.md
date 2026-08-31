@@ -46,6 +46,10 @@ machines where Windows itself runs in dark mode.
   opaque background patch behind the text; readable on both color families.
 - Themed QSS is additionally applied at application level so tooltips, menus
   and message boxes outside the main window hierarchy pick up the theme.
+- **Font warning spam eliminated** — the track-row delegate computed derived
+  font sizes from an *unresolved* font (`pointSizeF() == -1`), producing
+  `setPointSizeF: Point size <= 0` warnings on every repaint. The base font
+  is now resolved first and every derived size is clamped to a sane minimum.
 
 ### ✅ Verification (v2.0.1)
 Automated offscreen harness over **all 12 themes** (fresh boot with a saved
@@ -302,6 +306,6 @@ The first stable, production-ready version of Golden Music!
 
 <div align="center">
 
-**Golden Music v1.0.0** — First Public Release 🎉
+**Golden Music v2.0.1** — Psychology Theme Suite 🎨
 
 </div>

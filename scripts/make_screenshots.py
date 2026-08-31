@@ -22,12 +22,10 @@ SHOTS = Path(__file__).resolve().parent.parent / "screenshots"
 SHOTS.mkdir(exist_ok=True)
 
 # theme name -> output file (the four used in README.md)
-CAPTURES = [
-    ("royal_gold", "royal_gold.png"),
-    ("porcelain", "porcelain.png"),
-    ("midnight_blue", "midnight.png"),
-    ("neon_rose", "neon_rose.png"),
-]
+from config import Theme
+
+# Every theme -> screenshots/<theme>.png
+CAPTURES = [(name, f"{name}.png") for name in Theme.names()]
 
 w = MainWindow()
 w.resize(1120, 720)
