@@ -78,6 +78,40 @@ except ImportError:
 log = logging.getLogger("app")
 
 
+def _scratch_prefixes():
+    """OS temp dirs whose paths must never be persisted to user config."""
+    out = set()
+    try:
+        import tempfile
+        out.add(os.path.normcase(os.path.abspath(tempfile.gettempdir())))
+    except Exception:
+        pass
+    for cand in (r"C:\Windows\Temp", "/tmp", "/var/tmp"):
+        try:
+            out.add(os.path.normcase(os.path.abspath(cand)))
+        except Exception:
+            pass
+    return {x for x in out if x}
+
+
+_SCRATCH_PREFIXES = _scratch_prefixes()
+
+
+def _is_scratch_path(p: str) -> bool:
+    """True for Temp/sandbox paths (test-suite mkdtemp dirs, OS temp).
+
+    Dev/test scripts build fake libraries under mkdtemp dirs; those paths
+    must never be written into the real user config — see scripts/testenv.py
+    (which additionally isolates every test run into a sandbox HOME).
+    """
+    try:
+        ap = os.path.normcase(os.path.abspath(str(p)))
+    except Exception:
+        return True
+    return any(ap == pre or ap.startswith(pre + os.sep)
+               for pre in _SCRATCH_PREFIXES)
+
+
 class RepeatMode(Enum):
     OFF = 0
     ALL = 1
@@ -1744,6 +1778,7 @@ class MainWindow(QMainWindow):
         # Threads
         self.scanner = None
         self._scan_results_pending = None
+        self._last_scan_folders = None
         self._cover_loader = None
         self._albums_worker = None
 
@@ -3079,8 +3114,8 @@ class MainWindow(QMainWindow):
         if not self.added_folders:
             return
         existing = [f for f in self.added_folders if os.path.isdir(f)]
-        if len(existing) != len(self.added_folders):
-            self.added_folders = existing
+        # Never forget registered folders just because a drive is
+        # temporarily offline — scan what's reachable, keep the rest.
         if not existing:
             return
         self._start_scan(existing, label="Checking for new tracks...")
@@ -3095,6 +3130,7 @@ class MainWindow(QMainWindow):
         self.scan_progress.setVisible(True)
         self.rail.btn_add.setEnabled(False)
         self.rail.btn_refresh.setEnabled(False)  # no double-queue scans
+        self._last_scan_folders = list(folders)
         self.scanner = FolderScanner(folders, self)
         self.scanner.progress.connect(self._on_scan_progress)
         self.scanner.finished_scan.connect(self._on_scan_finished)
@@ -3117,11 +3153,25 @@ class MainWindow(QMainWindow):
                 self.library.append(p)
                 existing.add(p)
                 added += 1
+        # Prune ONLY entries under the folders this scan actually covered
+        # (+ always drop scratch/test paths). Tracks elsewhere — e.g. on a
+        # temporarily disconnected drive — are kept, never wiped.
+        roots = [os.path.normcase(os.path.abspath(f))
+                 for f in (getattr(self, "_last_scan_folders", None) or [])
+                 if f]
+
+        def _keep(p):
+            if _is_scratch_path(p):
+                return False
+            if os.path.exists(p):
+                return True
+            return not any(path_within(p, r) for r in roots)
+
         before = len(self.library)
-        self.library = [p for p in self.library if os.path.exists(p)]
+        self.library = [p for p in self.library if _keep(p)]
         removed = before - len(self.library)
         self.library.sort(key=lambda x: os.path.basename(x).lower())
-        self.favorites = {p for p in self.favorites if os.path.exists(p)}
+        self.favorites = {p for p in self.favorites if _keep(p)}
         self.scan_progress.setVisible(False)
         self.scan_status_label.setVisible(False)
         self.rail.btn_add.setEnabled(True)
@@ -4986,16 +5036,49 @@ class MainWindow(QMainWindow):
         self._save_timer.start()
 
     def _save_config(self):
+        # NEVER-WIPE GUARDS (data-loss fix):
+        # 1. Scratch/Temp paths (test sandboxes) are never persisted.
+        lib = [p for p in self.library if not _is_scratch_path(p)]
+        favs = sorted(p for p in self.favorites
+                      if not _is_scratch_path(p))
+        folders = [f for f in self.added_folders
+                   if not _is_scratch_path(f)]
+        playlists = {name: [p for p in paths if not _is_scratch_path(p)]
+                     for name, paths in self.playlists.items()
+                     if isinstance(name, str) and isinstance(paths, list)}
+        last = (self.current_track if self.remember_track else None)
+        if last is not None and _is_scratch_path(last):
+            last = None
+        # 2. Never replace a non-empty saved library with an empty one
+        #    (failed load / foreign in-memory state) — keep the disk data
+        #    and persist settings around it.
+        try:
+            raw = config_path().read_text(encoding="utf-8")
+            old = json.loads(raw) if raw.strip() else {}
+            if not lib and isinstance(old, dict) and old.get("library"):
+                lib = [q for q in old["library"] if isinstance(q, str)]
+                favs = sorted(q for q in old.get("favorites", [])
+                              if isinstance(q, str))
+                folders = [q for q in old.get("added_folders", [])
+                           if isinstance(q, str)]
+                old_pl = old.get("playlists", {})
+                if isinstance(old_pl, dict):
+                    playlists = {str(k): [q for q in v if isinstance(q, str)]
+                                 for k, v in old_pl.items()
+                                 if isinstance(k, str) and isinstance(v, list)}
+                log.warning("save guard: kept on-disk library "
+                            "(in-memory library was empty)")
+        except Exception:
+            pass
         cfg = {
             "version": APP_VERSION,
             "theme": self.theme_name,
-            "library": self.library,
-            "favorites": sorted(self.favorites),
-            "added_folders": self.added_folders,
-            "playlists": {name: paths for name, paths in self.playlists.items()
-                          if isinstance(name, str) and isinstance(paths, list)},
+            "library": lib,
+            "favorites": favs,
+            "added_folders": folders,
+            "playlists": playlists,
             "volume": self.player_bar.vol_slider.value() if hasattr(self, "player_bar") else 80,
-            "last_track": self.current_track if self.remember_track else None,
+            "last_track": last,
             "last_position": self.audio.position() if self.remember_track and self.audio.available else 0,
             "shuffle": self.shuffle,
             "repeat_mode": self.repeat_mode.value,
@@ -5275,7 +5358,10 @@ class MainWindow(QMainWindow):
 
         # Warm album groups + covers in the background so the Albums page is
         # instant on first visit (user request: preload, keep, revisit fast).
-        QTimer.singleShot(1500, self._preload_albums_background)
+        # Smoke mode quits at 2500 ms — don't start a heavy worker at
+        # 1500 ms that would race the shutdown.
+        if not getattr(self, "_smoke", False):
+            QTimer.singleShot(1500, self._preload_albums_background)
 
     def _restore_position(self, path, pos):
         if self.current_track == path:
@@ -5520,13 +5606,28 @@ def main():
     if QSystemTrayIcon.isSystemTrayAvailable():
         w.tray.show()
     if smoke:
-        # Let pending async init (config load, theme apply) run, then quit.
+        # Let pending async init (config load, theme apply) run, then quit
+        # through the NORMAL close path: a bare app.quit() tears down the
+        # interpreter while scanner/tag/cover workers are mid-emit
+        # ("QThread: Destroyed while thread is still running" → segfault
+        # on large libraries). close() runs closeEvent, which cancels and
+        # joins every worker first.
         from PyQt6.QtCore import QTimer
+        w._smoke = True
         print(f"SMOKE OK: window visible={w.isVisible()}, "
               f"theme={getattr(w, 'theme', {}).get('name', '?')}, "
               f"tracks={len(getattr(w, 'library', []))}, "
               f"rate_popup_icons=6")
-        QTimer.singleShot(1500, lambda: app.quit())
+
+        def _smoke_quit():
+            try:
+                w._force_quit = True
+                w.close()
+            except Exception as e:
+                print(f"smoke close: {e}")
+            app.quit()
+
+        QTimer.singleShot(2500, _smoke_quit)
     code = app.exec()
     if smoke:
         print("SMOKE DONE")

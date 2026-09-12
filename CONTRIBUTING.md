@@ -172,7 +172,7 @@ If applicable, add screenshots.
 **Environment:**
 - OS: Windows 11
 - Python version: 3.11.0
-- Golden Music version: 2.1.0
+- Golden Music version: 2.1.1
 - How did you install: [installer / from source]
 ```
 

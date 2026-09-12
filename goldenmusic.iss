@@ -1,6 +1,6 @@
 ; Golden Music — Windows installer script (Inno Setup 6)
 ; Build:  iscc goldenmusic.iss
-; Output: dist/installer/GoldenMusicSetup-2.1.0.exe
+; Output: dist/installer/GoldenMusicSetup-2.1.1.exe
 ;
 ; Update behavior:
 ;   - AppId is the SAME as v1.0.0, so Windows/Inno treat this as an UPDATE
@@ -10,7 +10,7 @@
 ;     first-time install (per-user, no admin required).
 
 #define AppName        "Golden Music"
-#define AppVersion     "2.1.0"
+#define AppVersion     "2.1.1"
 #define AppPublisher   "Golden Music"
 #define AppExeName     "GoldenMusic.exe"
 #define AppDescription "Golden Music Player"
@@ -31,7 +31,7 @@ DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 DisableWelcomePage=no
 OutputDir=dist\installer
-OutputBaseFilename=GoldenMusicSetup-2.1.0
+OutputBaseFilename=GoldenMusicSetup-2.1.1
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern

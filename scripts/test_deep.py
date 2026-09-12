@@ -17,6 +17,12 @@ from pathlib import Path
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# --- Test isolation: sandbox HOME + portable config -------------------------
+# MUST run before any project import (config_path() reads HOME at call time).
+import testenv as _testenv
+_testenv.install()
+del _testenv
+# ------------------------------------------------------------------------------
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QApplication, QMessageBox
@@ -232,7 +238,10 @@ def config_roundtrip():
     w._save_config()
     cfg = json.loads(config_path().read_text(encoding="utf-8"))
     assert cfg["theme"] == "midnight_blue"
-    assert sorted(cfg["library"]) == sorted(w.library)
+    # Save guard strips scratch/test paths — compare against the same filter
+    import main as _m
+    expect = sorted(p for p in w.library if not _m._is_scratch_path(p))
+    assert sorted(cfg["library"]) == expect, "persisted library mismatch"
     w.theme_name = "royal_gold"
 check("config_save_contains_state", config_roundtrip)
 

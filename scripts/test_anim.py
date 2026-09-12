@@ -1,8 +1,16 @@
 """Temporary test: hover animation on IconButton."""
+import os
 import sys
+from pathlib import Path
 import time
 
-sys.path.insert(0, '.')
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+# --- Test isolation: sandbox HOME + portable config -------------------------
+# MUST run before any project import (config_path() reads HOME at call time).
+import testenv as _testenv
+_testenv.install()
+del _testenv
+# ------------------------------------------------------------------------------
 from PyQt6.QtWidgets import QApplication
 
 app = QApplication(sys.argv)

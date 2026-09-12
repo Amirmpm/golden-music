@@ -6,8 +6,16 @@ Covers the UX contract added in 2.0.0:
      (users may audition several themes); popup re-skins itself live.
   3. The ✕ button (Lucide close icon) closes the picker.
 """
+import os
 import sys
-sys.path.insert(0, '.')
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+# --- Test isolation: sandbox HOME + portable config -------------------------
+# MUST run before any project import (config_path() reads HOME at call time).
+import testenv as _testenv
+_testenv.install()
+del _testenv
+# ------------------------------------------------------------------------------
 from PyQt6.QtWidgets import QApplication
 
 app = QApplication(sys.argv)

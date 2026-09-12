@@ -7,6 +7,12 @@ from pathlib import Path
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# --- Test isolation: sandbox HOME + portable config -------------------------
+# MUST run before any project import (config_path() reads HOME at call time).
+import testenv as _testenv
+_testenv.install()
+del _testenv
+# ------------------------------------------------------------------------------
 random.seed(11)
 
 from PyQt6.QtWidgets import QApplication

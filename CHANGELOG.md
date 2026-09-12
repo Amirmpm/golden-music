@@ -5,6 +5,32 @@ All notable changes to Golden Music will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.1] - 2026-09-12
+
+### 🛡️ Fixed — Data-loss bug (library wiped, test tracks appeared)
+
+- **Root cause** — the dev test suites booted the real `MainWindow`
+  with fake Temp libraries and called `_save_config()`, overwriting the
+  live `~/.goldenmusic/config.json` with test junk; the next boot's
+  exists-prune then wiped the real library. Offscreen scripts and theme
+  screenshot runs could do the same.
+- **Never-wipe guards in `_save_config`** — Temp/scratch paths are never
+  persisted; an empty in-memory library can no longer replace a
+  non-empty saved library (disk data is kept, settings saved around it).
+- **Scoped pruning** — `_on_scan_finished` only prunes entries under the
+  folders that scan actually covered (+ always drops Temp paths); tracks
+  on temporarily-offline drives survive.
+- **Offline folders remembered** — `_startup_rescan` no longer forgets
+  registered folders when a drive is briefly unavailable.
+- **Test isolation** — new `scripts/testenv.py` sandboxes HOME + the
+  portable dev config for every script that boots `MainWindow`; all
+  suites updated. Escape hatch: `GOLDENMUSIC_ALLOW_REAL_CONFIG=1`.
+- **Poisoned backups cleaned** — all test-junk snapshots removed; a good
+  backup of the restored library was taken.
+- **Recovery** — library rebuilt from `stats.json` live paths + a full
+  scan of the music folder (3513 tracks, all verified on disk);
+  `stats.json` play history untouched.
+
 ## [2.1.0] - 2026-09-12
 
 ### ✨ Added

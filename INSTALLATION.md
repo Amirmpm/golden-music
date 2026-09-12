@@ -9,7 +9,7 @@ This guide covers all the ways to install and run Golden Music on Windows.
 ### Download the Installer
 
 1. Go to [Releases](../../releases)
-2. Download `GoldenMusicSetup-2.1.0.exe`
+2. Download `GoldenMusicSetup-2.1.1.exe`
 3. Run the installer — it detects an existing installation and updates in place; your library, favorites and settings are preserved
 4. Follow the setup wizard
 5. Launch Golden Music from the Start Menu or Desktop shortcut
@@ -67,10 +67,10 @@ python --version
 5. **Find the output:**
    ```
    dist\GoldenMusic\GoldenMusic.exe         # The app
-   dist\installer\GoldenMusicSetup-2.1.0.exe # The installer
+   dist\installer\GoldenMusicSetup-2.1.1.exe # The installer
    ```
 
-6. **Run the installer** (`GoldenMusicSetup-2.1.0.exe`) to install properly.
+6. **Run the installer** (`GoldenMusicSetup-2.1.1.exe`) to install properly.
 
 ---
 
@@ -117,7 +117,7 @@ golden-music\
 │   │                   ├── platforms\
 │   │                   └── styles\
 │   └── installer\
-│       └── GoldenMusicSetup-2.1.0.exe      # The installer
+│       └── GoldenMusicSetup-2.1.1.exe      # The installer
 └── ...
 ```
 

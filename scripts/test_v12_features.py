@@ -8,6 +8,12 @@ from pathlib import Path
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# --- Test isolation: sandbox HOME + portable config -------------------------
+# MUST run before any project import (config_path() reads HOME at call time).
+import testenv as _testenv
+_testenv.install()
+del _testenv
+# ------------------------------------------------------------------------------
 random.seed(3)
 
 from PyQt6.QtWidgets import QApplication, QMessageBox
@@ -120,11 +126,16 @@ check("sidecar_lrc_found", sidecar_lookup)
 
 print("\n=== Play Stats ===")
 def stats_accumulate():
+    # Credit rule needs >70% of duration: credit_track(path, sec, artist,
+    # duration_seconds, listened_seconds) — pass listened >= duration.
     st = playstats.PlayStats(tmp / "stats.json")
     st.add_seconds(3661.5)   # + 1h 1m 1s
-    st.credit_track(tracks[0], 120, "Alpha")
-    st.credit_track(tracks[0], 130, "Alpha")
-    st.credit_track(tracks[1], 60, "Beta")
+    st.credit_track(tracks[0], 120, "Alpha",
+                    duration_seconds=150, listened_seconds=140)
+    st.credit_track(tracks[0], 130, "Alpha",
+                    duration_seconds=150, listened_seconds=140)
+    st.credit_track(tracks[1], 60, "Beta",
+                    duration_seconds=200, listened_seconds=50)
     assert st.play_counts[tracks[0]] == 2
     fmt = PlayStats_fmt(st.total_seconds)
     assert "h" in fmt and "min" in fmt
