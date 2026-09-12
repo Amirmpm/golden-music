@@ -83,7 +83,7 @@ a = Analysis(
         'curses', 'sqlite3', 'distutils', 'setuptools', 'pip',
     ],
     noarchive=False,
-    optimize=0,
+    optimize=2,
 )
 
 pyz = PYZ(a.pure, a.zipped_data)
@@ -96,8 +96,8 @@ exe = EXE(
     name='GoldenMusic',
     debug=False,
     bootloader_ignore_signals=False,
-    strip=False,
-    upx=False,
+    strip=True,
+    upx=True,
     console=False,
     disable_windowed_traceback=True,
     icon='assets/icon.ico',

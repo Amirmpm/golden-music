@@ -32,7 +32,7 @@ except ImportError:
     HAVE_QT_AUDIO = False
 
 APP_NAME = "Golden Music"
-APP_VERSION = "2.0.1"
+APP_VERSION = "2.1.0"
 ORG_NAME = "GoldenMusic"
 
 # Audio extensions

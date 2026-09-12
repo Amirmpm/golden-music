@@ -33,7 +33,7 @@ DEMO_TRACKS = [
 DEMO_LIBRARY = [f"C:/DemoMusic/{t.replace(' ', '_').lower()}.mp3"
                 for t, _ in DEMO_TRACKS]
 seed = {
-    "version": "2.0.1",
+    "version": "2.1.0",
     "theme": "royal_gold",
     "library": DEMO_LIBRARY,
     "favorites": DEMO_LIBRARY[:3],

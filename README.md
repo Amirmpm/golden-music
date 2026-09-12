@@ -8,7 +8,7 @@
 
 *12 psychology-driven themes · Smart shuffle · Glass tray popup · Zero clutter*
 
-[![Version](https://img.shields.io/badge/Version-2.0.1-brightgreen?style=for-the-badge)](../../releases)
+[![Version](https://img.shields.io/badge/Version-2.1.0-brightgreen?style=for-the-badge)](../../releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![PyQt6](https://img.shields.io/badge/PyQt6-6.11+-41CD52?style=for-the-badge&logo=qt&logoColor=white)](https://www.riverbankcomputing.com/software/pyqt/)
 [![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white)](#)
@@ -174,7 +174,7 @@ the window to the tray instead of minimizing (Settings → Interface).
 ### Option 1: Download Installer (Recommended)
 
 1. Go to [Releases](../../releases)
-2. Download `GoldenMusicSetup-2.0.1.exe`
+2. Download `GoldenMusicSetup-2.1.0.exe`
 3. Run the installer — it detects an existing installation and updates in place; your library, favorites and settings are preserved
 4. Enjoy your music! 🎉
 
@@ -211,7 +211,7 @@ build_windows.bat
 
 Output:
 - `dist\GoldenMusic\GoldenMusic.exe` — The app (portable folder)
-- `dist\installer\GoldenMusicSetup-2.0.1.exe` — The installer
+- `dist\installer\GoldenMusicSetup-2.1.0.exe` — The installer
 
 ---
 

@@ -5492,7 +5492,13 @@ def _enable_windows_glass(widget):
 
 def main():
     log_path = setup_logging()
-    if sys.platform == 'win32':
+    # Build smoke test: `GoldenMusic.exe --smoke` boots the real window,
+    # reports OK, and exits — used by build_release.py to prove the bundle
+    # is not missing DLLs/plugins after trimming.
+    smoke = "--smoke" in sys.argv
+    if smoke:
+        sys.argv.remove("--smoke")
+    if sys.platform == 'win32' and not smoke:
         # Single-instance: focus the running window instead of launching a copy
         if not _acquire_single_instance_lock():
             _focus_existing_instance()
@@ -5513,7 +5519,17 @@ def main():
     _enable_windows_glass(w)
     if QSystemTrayIcon.isSystemTrayAvailable():
         w.tray.show()
+    if smoke:
+        # Let pending async init (config load, theme apply) run, then quit.
+        from PyQt6.QtCore import QTimer
+        print(f"SMOKE OK: window visible={w.isVisible()}, "
+              f"theme={getattr(w, 'theme', {}).get('name', '?')}, "
+              f"tracks={len(getattr(w, 'library', []))}, "
+              f"rate_popup_icons=6")
+        QTimer.singleShot(1500, lambda: app.quit())
     code = app.exec()
+    if smoke:
+        print("SMOKE DONE")
     sys.exit(code)
 
 

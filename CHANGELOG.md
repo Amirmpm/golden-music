@@ -5,6 +5,23 @@ All notable changes to Golden Music will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-09-12
+
+### ✨ Added
+- **Fullscreen player** — split view (cover + transport / synced lyrics),
+  visualizer with theme cycling, keyboard control (F11/F/Esc/Space/arrows).
+- **Synced lyrics engine** — sidecar → embedded tags → disk cache →
+  lrclib.net lookup, auto-scroll highlighting in panel + fullscreen.
+- **Dynamic visualizer** (`Settings → Interface`) with WMP-style themes.
+
+### 🐞 Fixed
+- **Playback-speed popup presets** — icon-less text buttons squeezed into
+  ~50px so Qt elided labels ("0."). Rebuilt as a 2×3 grid (min 112×52)
+  with Lucide icons + full text; active rate highlighted gold.
+- **Stats ghost rows** — moved/renamed files lost their history; engine now
+  resolves living twins (basename/stem search) and prunes truly-deleted
+  entries instead of showing dead rows.
+
 ## [2.0.1] - 2026-08-27
 
 ### 🐞 Fixed — Light-theme readability bugs
