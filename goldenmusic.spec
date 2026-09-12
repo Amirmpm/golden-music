@@ -27,7 +27,7 @@ for plugin_name in ["mediaservice", "audio", "platforms", "imageformats",
         datas.append((plugin_path + '/*', os.path.join('PyQt6', 'Qt6', 'plugins', plugin_name)))
 
 a = Analysis(
-    ['main.py'],
+    ['main.pyw'],
     pathex=[],
     binaries=[],
     datas=datas,
@@ -51,6 +51,9 @@ a = Analysis(
         'win32event',
         # our own late-imported modules (imported inside functions)
         'applog',
+        'lrc_cache',
+        'lyrics_panel',
+        'fullscreen_player',
         'mediakeys',
         'trackinfo',
         'track_info_dialog',

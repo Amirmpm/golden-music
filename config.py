@@ -654,18 +654,70 @@ def load_tag_cache_file(path) -> dict:
     return cache
 
 
+_path_cache: dict[str, str] = {}   # raw path -> resolved (normcased)
+_PATH_CACHE_MAX = 50_000
+
+
+def _resolved(path: str) -> str:
+    """Cached Path.resolve() — resolve() is a syscall chain per call, and the
+    folder-filter hot loop ran it for every library track on every click.
+    Results are stable for a session; cache is size-bounded."""
+    hit = _path_cache.get(path)
+    if hit is not None:
+        return hit
+    try:
+        r = os.path.normcase(str(Path(path).resolve()))
+    except (OSError, ValueError):
+        r = os.path.normcase(path)
+    if len(_path_cache) < _PATH_CACHE_MAX:
+        _path_cache[path] = r
+    return r
+
+
 def path_within(child: str, parent: str) -> bool:
     """True if `child` is inside directory `parent` (path-boundary safe).
 
     Uses realpaths so symlinked folders can't smuggle tracks in from outside,
     and compares path components — no 'C:\\MusicX' matching 'C:\\Music' prefix bug.
+    Fast path first: a normcased component-wise prefix check answers the
+    overwhelming majority of cases with zero syscalls; only near-miss
+    candidates (same prefix, could be a sibling like MusicX vs Music) fall
+    through to the memoized full resolve.
     """
+    fast = _fast_within(os.path.normcase(child), os.path.normcase(parent))
+    if fast is not None:
+        return fast
     try:
-        c = Path(child).resolve()
-        p = Path(parent).resolve()
+        c = Path(_resolved(child))
+        p = Path(_resolved(parent))
         return c == p or p in c.parents
     except (OSError, ValueError):
         return False
+
+
+def _fast_within(nc_child: str, nc_parent: str) -> bool | None:
+    """Component-wise prefix check on normcased strings.
+
+    Returns True/False when the answer is certain from the string shapes,
+    None when a boundary case needs the resolve-based check (trailing
+    separator differences or sibling-prefix ambiguity)."""
+    if not nc_parent or not nc_child:
+        return False
+    if nc_child == nc_parent:
+        return True
+    sep = "\\" if "\\" in nc_parent or "/" not in nc_parent else "/"
+    if nc_child.startswith(nc_parent + sep):
+        return True
+    # Definite NO only when the parent isn't a path-prefix at all AND there
+    # is no component boundary ambiguity worth resolving (symlinks can still
+    # redirect a plain-prefix match, so those stay in the slow path).
+    if len(nc_child) > len(nc_parent) and not nc_parent.endswith(("\\", "/")):
+        # e.g. child C:\musicx\... vs parent C:\music -> ambiguous sibling?
+        head = nc_child[:len(nc_parent)]
+        nxt = nc_child[len(nc_parent)]
+        if head == nc_parent and nxt not in ("\\", "/"):
+            return False   # 'C:\musicX' vs 'C:\music' — genuinely outside
+    return None
 
 
 def extract_title_artist(filepath: str) -> tuple:
@@ -709,14 +761,15 @@ def extract_title_artist(filepath: str) -> tuple:
     def clean(s):
         if not s:
             return s
-        s = re.sub(r'\[?wWw\..*?\]?', '', s)
-        s = re.sub(r'\[?Download1Music\.IR\]?', '', s, flags=re.IGNORECASE)
-        s = re.sub(r'\[?DibaMusics\.Com\]?', '', s, flags=re.IGNORECASE)
-        s = re.sub(r'\[?SevilMusic\.Com\]?', '', s, flags=re.IGNORECASE)
-        s = re.sub(r'\[?TakTaraneh\.Com\]?', '', s, flags=re.IGNORECASE)
+        # Literal "www." domains inside optional brackets — [wWw] was a
+        # single-char class before, which never matched "www." at all.
+        s = re.sub(r'\[?\s*www\.[^\]\s]+\.?[a-z]{2,}\s*\]?', '', s, flags=re.IGNORECASE)
+        for site in ("Download1Music", "DibaMusics", "SevilMusic", "TakTaraneh"):
+            s = re.sub(r'\[?\s*' + site + r'\.(com|ir)\s*\]?', '', s, flags=re.IGNORECASE)
         s = re.sub(r'~\[.*?\]~', '', s)
-        s = re.sub(r'\(\s*.*?\.ir\s*\)', '', s, flags=re.IGNORECASE)
-        s = re.sub(r'\(\s*.*?\.com\s*\)', '', s, flags=re.IGNORECASE)
+        # Site tags inside ONE paren group only — never bridge two separate
+        # parens (the old lazy '.*?' happily ate "(Tehran) bootleg (fan.ir)").
+        s = re.sub(r'\(\s*[^()]*?\.(?:ir|com|net)\s*\)', '', s, flags=re.IGNORECASE)
         s = re.sub(r'^\[|\]$', '', s).strip()
         s = re.sub(r'\s+', ' ', s).strip()
         return s

@@ -20,6 +20,10 @@ QMessageBox.information = auto_info
 
 import coverart
 from main import MainWindow, APP_NAME, View, RepeatMode, SortMode
+
+# Neuter the async config load CLASS-WIDE: singleShot(50) captures the
+# bound method inside __init__, so an instance-level stub can't stop it.
+MainWindow._load_config_async = lambda self: None
 from settings_dialog import SettingsDialog
 from config import config_path, extract_title_artist
 
@@ -40,7 +44,15 @@ for i in range(10):
     p = tmp / f"Artist {i:02d} - Song {i:02d}.mp3"; p.write_bytes(b"FAKE")
     tracks.append(str(p)); coverart._cover_cache[str(p)] = COVER
 
-w = MainWindow(); w.resize(1000, 700); w.show()
+w = MainWindow()
+# Tests build their own library — disable the async config load
+# (it would overwrite the fake library with the developer's real one)
+try:
+    w._load_config_async = lambda: None
+
+except NameError:
+    pass
+w.resize(1000, 700); w.show()
 
 def fake_load(path):
     pass
@@ -82,8 +94,10 @@ check("switch_lib", lambda: (w._on_rail_clicked("library"), w.current_view == Vi
 print("\n=== Search ===")
 def search_filter():
     w.search_edit.setText("Artist 03")
+    app.processEvents(); time.sleep(0.3); app.processEvents()
     assert w.library_list.count() == 1, f"expected 1, got {w.library_list.count()}"
     w.search_edit.setText("")
+    app.processEvents(); time.sleep(0.3); app.processEvents()
 check("search_filters", search_filter)
 
 print("\n=== Sort ===")

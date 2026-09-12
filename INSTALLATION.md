@@ -86,7 +86,7 @@ If you want to run Golden Music without building an installer:
 
 2. **Run:**
    ```bash
-   python main.py
+   python main.pyw
    ```
 
 ---
@@ -196,7 +196,7 @@ Golden Music stores its data at:
 **To reset to defaults:** Delete this folder and restart the app.
 
 *Portable mode:* if a `goldenmusic_config.json` sits next to the executable
-(or `main.py`), the app stores everything in that folder instead.
+(or `main.pyw`), the app stores everything in that folder instead.
 
 ---
 

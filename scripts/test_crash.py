@@ -24,6 +24,10 @@ QMessageBox.information = auto_info
 import coverart
 from main import MainWindow, APP_NAME, View, RepeatMode
 
+# Neuter the async config load CLASS-WIDE: singleShot(50) captures the
+# bound method inside __init__, so an instance-level stub can't stop it.
+MainWindow._load_config_async = lambda self: None
+
 def make_cover():
     pm = QPixmap(200, 200)
     grad = QLinearGradient(0, 0, 200, 200)
@@ -41,7 +45,14 @@ for i in range(20):
     p = tmp / f"Artist {i:02d} - Song {i:02d}.mp3"; p.write_bytes(b"FAKE")
     tracks.append(str(p)); coverart._cover_cache[str(p)] = COVER
 
-w = MainWindow(); w.resize(1000, 700); w.show()
+w = MainWindow()
+# Tests build their own library — disable the async config load
+# (it would overwrite the fake library with the developer's real one)
+try:
+    w._load_config_async = lambda: None
+except NameError:
+    pass
+w.resize(1000, 700); w.show()
 
 def fake_load(path): pass
 def fake_load_and_play(path): pass

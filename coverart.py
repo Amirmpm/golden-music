@@ -44,6 +44,20 @@ def get_cover_pixmap(filepath: str, size: int = 0) -> QPixmap:
     return pm
 
 
+def get_cached_pixmap(filepath: str) -> QPixmap | None:
+    """Decode a pixmap ONLY if the cover bytes are already cached — no file
+    I/O, no mutagen probe. Used by UI hot paths (albums grid) so a cold
+    cache shows the placeholder and the background worker fills real art
+    later, instead of freezing the UI thread on first paint."""
+    data = _cover_cache.get(filepath)
+    if not data:
+        return None
+    pm = QPixmap()
+    if not pm.loadFromData(QByteArray(data)):
+        return None
+    return pm
+
+
 def bytes_to_pixmap(data: bytes) -> QPixmap:
     if not data or len(data) > COVER_MAX_BYTES:
         return QPixmap()

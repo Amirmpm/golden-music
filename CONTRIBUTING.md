@@ -74,7 +74,7 @@ Fix bugs, add features, optimize performance.
 
 5. **Run the app**:
    ```bash
-   python main.py
+   python main.pyw
    ```
 
 6. **Create a branch** for your changes:
@@ -107,7 +107,7 @@ We use [Conventional Commits](https://www.conventionalcommits.org/):
 | `feat` | New feature | `feat: add equalizer with 10-band control` |
 | `fix` | Bug fix | `fix: resolve crash when clicking seek bar` |
 | `docs` | Documentation | `docs: update README with new screenshots` |
-| `style` | Code style | `style: format main.py with black` |
+| `style` | Code style | `style: format main.pyw with black` |
 | `refactor` | Refactoring | `refactor: simplify audio backend` |
 | `test` | Tests | `test: add crash test for slider` |
 | `chore` | Build/tooling | `chore: update dependencies` |
@@ -230,7 +230,7 @@ build_windows.bat
 
 ```
 golden-music/
-├── main.py              # Main window (start here)
+├── main.pyw             # Main window (start here)
 ├── config.py            # Themes, QSS, helpers
 ├── icons.py             # SVG icons
 ├── audio.py             # Audio backend

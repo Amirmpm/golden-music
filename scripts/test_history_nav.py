@@ -28,12 +28,24 @@ app = QApplication(sys.argv)
 import coverart
 from main import MainWindow, View, RepeatMode
 
+# Neuter the async config load CLASS-WIDE: singleShot(50) captures the
+# bound method inside __init__, so an instance-level stub can't stop it.
+MainWindow._load_config_async = lambda self: None
+
 tmp = Path(tempfile.mkdtemp(prefix="gmhist_"))
 T = [str(tmp / f"Track {i}.mp3") for i in range(8)]
 for t in T:
     Path(t).write_bytes(b"FAKE")
 
-w = MainWindow(); w.show()
+w = MainWindow()
+# Tests build their own library — disable the async config load
+# (it would overwrite the fake library with the developer's real one)
+try:
+    w._load_config_async = lambda: None
+
+except NameError:
+    pass
+w.show()
 w.audio.load = lambda p: None
 w.audio.load_and_play = lambda p: None
 w.audio.stop = lambda: None
@@ -209,4 +221,12 @@ if errors:
     for n, tb in errors:
         print(f"\n--- {n} ---\n{tb}")
     sys.exit(1)
+# Wait out the background tag loader so the interpreter never tears down
+# while a QThread is mid-emit (that aborts the process AFTER "passed").
+try:
+    w._tag_loader.cancel()
+    if w._tag_loader is not None and w._tag_loader.isRunning():
+        w._tag_loader.wait(2000)
+except Exception:
+    pass
 print("ALL HISTORY-NAV TESTS PASSED!")

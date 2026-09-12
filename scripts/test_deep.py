@@ -31,6 +31,10 @@ QMessageBox.information = auto_info
 
 import coverart
 from main import MainWindow, View, RepeatMode, SortMode
+
+# Neuter the async config load CLASS-WIDE: singleShot(50) captures the
+# bound method inside __init__, so an instance-level stub can't stop it.
+MainWindow._load_config_async = lambda self: None
 from config import config_path, load_tag_cache_file, path_within
 
 tmp = Path(tempfile.mkdtemp(prefix="gmdeep_"))
@@ -44,7 +48,15 @@ sub = tmp / "subfolderX"
 sub.mkdir()
 (sub / "Artist 90 - Other.mp3").write_bytes(b"FAKE")
 
-w = MainWindow(); w.resize(1000, 700); w.show()
+w = MainWindow()
+# Tests build their own library — disable the async config load
+# (it would overwrite the fake library with the developer's real one)
+try:
+    w._load_config_async = lambda: None
+
+except NameError:
+    pass
+w.resize(1000, 700); w.show()
 
 # Stub audio backend (no real audio in offscreen CI)
 w.audio.load = lambda p: None
@@ -155,12 +167,15 @@ check("search_sort_combined", search_then_sort)
 
 def search_case_insensitive():
     w.search_edit.setText("ARTIST 03")
+    app.processEvents(); time.sleep(0.3); app.processEvents()
     assert w.library_list.count() == 1
     w.search_edit.setText("")
+    app.processEvents(); time.sleep(0.3); app.processEvents()
 check("search_case_insensitive", search_case_insensitive)
 
 def count_label_updates_on_search():
     w.search_edit.setText("Song 01")
+    app.processEvents(); time.sleep(0.3); app.processEvents()
     txt = w.count_label.text()
     assert "1" in txt, f"count label should show filtered count, got '{txt}'"
     w.search_edit.setText("")

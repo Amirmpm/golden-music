@@ -216,9 +216,11 @@ class SettingsDialog(QDialog):
         self.tray_min_cb = QCheckBox(
             "Clicking the taskbar icon sends the app to the tray instead of minimizing")
         ui_layout.addWidget(self.tray_min_cb)
+        self.viz_cb = QCheckBox("Visualizer — animated background in the fullscreen player")
+        ui_layout.addWidget(self.viz_cb)
         layout.addWidget(ui_group)
 
-        # Audio output selection
+        # Audio output selection (HDMI / S/PDIF / headphones / speakers)
         out_group = QGroupBox("Audio Output")
         out_layout = QVBoxLayout(out_group)
         self.output_combo = QComboBox()
@@ -229,8 +231,16 @@ class SettingsDialog(QDialog):
                 self.output_combo.addItem(name, dev_id)
         except Exception:
             pass
+        self.output_combo.currentIndexChanged.connect(self._on_output_changed)
         out_layout.addWidget(self.output_combo)
-        hint = QLabel("Applies to new playback; restart the app for full effect.")
+        self.output_status = QLabel("")
+        self.output_status.setStyleSheet(
+            f"color: {self.main_window.theme['muted']}; font-size: 11px;")
+        out_layout.addWidget(self.output_status)
+        hint = QLabel("Switches immediately — including the track playing now. "
+                      "Only devices enabled in Windows are listed "
+                      "(enable HDMI/S-PDIF in Windows Sound settings first).")
+        hint.setWordWrap(True)
         hint.setStyleSheet(f"color: {self.main_window.theme['muted']}; font-size: 11px;")
         out_layout.addWidget(hint)
         layout.addWidget(out_group)
@@ -365,6 +375,7 @@ class SettingsDialog(QDialog):
         return tab
 
     def _load_current_settings(self):
+        mw = self.main_window
         # Appearance
         idx = self.theme_combo.findData(self.main_window.theme_name)
         if idx >= 0:
@@ -383,9 +394,11 @@ class SettingsDialog(QDialog):
         self.fade_cb.setChecked(bool(fx and fx.enabled_fade))
         if fx:
             self.fade_spin.setValue(int(getattr(fx, 'fade_ms', 300)))
-        self.ab_cb.setChecked(True)
-        self.rate_cb.setChecked(True)
-        self.lyrics_cb.setChecked(True)
+        self.ab_cb.setChecked(mw.player_bar.ab_btn.isVisible())
+        self.rate_cb.setChecked(mw.player_bar.rate_btn.isVisible())
+        self.lyrics_cb.setChecked(mw.player_bar.lyrics_btn.isVisible())
+        self.viz_cb.setChecked(
+            bool(getattr(mw, 'visualizer_enabled', True)))
         self.lyrics_online_cb.setChecked(
             getattr(self.main_window, 'lyrics_online_enabled', True))
 
@@ -407,6 +420,24 @@ class SettingsDialog(QDialog):
             f"border-radius: 8px; border: 1px solid {t['border']};"
             f"background: linear-gradient(135deg, {t['window_bg']}, {t['panel_bg']}, {t['gold']});"
         )
+
+    def _on_output_changed(self, idx):
+        """Switch the audio output device immediately (no OK needed)."""
+        dev_id = self.output_combo.itemData(idx)
+        if dev_id is None:
+            return
+        mw = self.main_window
+        mw.audio_output_id = dev_id or ""
+        try:
+            from audio_output import apply_output_device
+            ok = apply_output_device(mw.audio, dev_id)
+            name = self.output_combo.currentText()
+            self.output_status.setText(
+                f"✔ Now playing through: {name}" if ok
+                else "Could not switch to this device.")
+        except Exception as e:
+            self.output_status.setText(f"Switch failed: {e}")
+        mw._save_config_debounced()
 
     def _browse_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Default Music Folder", "")
@@ -472,16 +503,18 @@ class SettingsDialog(QDialog):
         mw.player_bar.rate_btn.setVisible(self.rate_cb.isChecked())
         mw.player_bar.lyrics_btn.setVisible(self.lyrics_cb.isChecked())
         mw.lyrics_online_enabled = self.lyrics_online_cb.isChecked()
-
-        # Audio output device
-        dev_id = self.output_combo.currentData() or ""
-        mw.audio_output_id = dev_id
+        mw.visualizer_enabled = self.viz_cb.isChecked()
         try:
-            from audio_output import apply_output_device
-            apply_output_device(mw.audio, dev_id)
-        except Exception as e:
-            import logging
-            logging.getLogger("app.settings").warning(f"output switch failed: {e}")
+            fs = getattr(mw, "_fullscreen_player", None)
+            if fs is not None:
+                fs.visualizer_enabled = mw.visualizer_enabled
+                fs.viz_btn.setChecked(mw.visualizer_enabled)
+        except Exception:
+            pass
+
+        # Audio output device — already applied live on combo change
+        # (_on_output_changed); keep the id in sync and persist it.
+        mw.audio_output_id = self.output_combo.currentData() or ""
 
         if self.sleep_cb.isChecked():
             self.main_window.start_sleep_timer(self.sleep_spin.value())

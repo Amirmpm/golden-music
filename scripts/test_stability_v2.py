@@ -98,7 +98,10 @@ check("scan_buttons_enabled_when_idle", refresh_disabled_flag_exists)
 
 print("\n=== Crossfade Removed ===")
 def crossfade_gone():
-    src = Path(__file__).resolve().parent.parent / "main.py"
+    # main lives as main.pyw (or main.py); find whichever exists
+    base = Path(__file__).resolve().parent.parent
+    src = next((p for p in (base / "main.pyw", base / "main.py") if p.is_file()),
+               base / "main.pyw")
     assert "crossfade" not in src.read_text(encoding="utf-8"), "crossfade must be fully removed"
     dlg_src = (Path(__file__).resolve().parent.parent / "settings_dialog.py").read_text(encoding="utf-8")
     assert "crossfade" not in dlg_src

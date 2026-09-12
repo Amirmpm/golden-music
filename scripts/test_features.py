@@ -66,9 +66,10 @@ print("\n=== Recursive Folder Tree ===")
 def full_tree_built():
     w.added_folders = [str(tmp)]
     w._rebuild_folder_tree()
-    # collect all folder items recursively
+    # The tree is LAZY: expanding a node materializes its real children.
     def walk(item, acc):
         acc.append(item.data(0, Qt.ItemDataRole.UserRole))
+        w.folder_tree.expandItem(item)
         for i in range(item.childCount()):
             walk(item.child(i), acc)
     roots = [w.folder_tree.topLevelItem(i) for i in range(w.folder_tree.topLevelItemCount())]
@@ -85,12 +86,14 @@ def tree_filter_deep_folder():
     w.library = list(tracks)
     w.added_folders = [str(tmp)]
     w.current_index = -1; w.current_track = None
-    # click the deepest folder item
+    # click the deepest folder item — the tree is LAZY: expanding each level
+    # materializes the next level's real children (placeholder "…" until then)
     found = None
     def find(item):
         nonlocal found
         if item.data(0, Qt.ItemDataRole.UserRole) == str(deep):
             found = item; return True
+        w.folder_tree.expandItem(item)   # materialize this branch
         return any(find(item.child(i)) for i in range(item.childCount()))
     for i in range(w.folder_tree.topLevelItemCount()):
         if find(w.folder_tree.topLevelItem(i)):

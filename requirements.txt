@@ -8,6 +8,9 @@ PyQt6-sip>=13.9
 # For reading ID3/FLAC/M4A tags (title, artist, album cover art)
 mutagen>=1.47.0
 
+# Windows single-instance lock + global media keys (required at runtime)
+pywin32>=306; sys_platform == "win32"
+
 # For building the .exe (run on Windows)
 # Bounded below 7.x — major bumps must be reviewed before adopting
 pyinstaller>=6.10.0,<7

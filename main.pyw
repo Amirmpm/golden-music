@@ -21,6 +21,7 @@ if sys.platform == 'win32':
 
 import json
 import logging
+import math
 import random
 import subprocess
 import time
@@ -30,7 +31,7 @@ from enum import Enum
 from applog import setup_logging
 
 from PyQt6.QtCore import (
-    Qt, QSize, QRect, QTimer, QEvent, pyqtSignal, QUrl,
+    Qt, QSize, QRect, QRectF, QPointF, QTimer, QEvent, pyqtSignal, QUrl,
     QObject, QThread, QPropertyAnimation, QVariantAnimation, QPoint,
     QEasingCurve
 )
@@ -96,6 +97,114 @@ class SortMode(Enum):
 
 
 # ============================================================================
+# MarqueeLabel — label that scrolls its text horizontally when it overflows
+# ============================================================================
+class MarqueeLabel(QLabel):
+    """A QLabel that gently scrolls overflowing text (marquee) so even very
+    long track titles become fully readable. Static when the text fits.
+
+    The scroll pauses at the start, glides to the end, pauses, and glides
+    back — far less jittery than a continuous loop.
+    """
+
+    _SCROLL_PX_PER_TICK = 1        # pixels per 40 ms tick ≈ 25 px/s
+    _EDGE_PAUSE_TICKS = 40         # pause (≈1.6 s) at each end of the text
+    _TICK_MS = 40
+
+    def __init__(self, text: str = "", parent=None):
+        super().__init__(text, parent)
+        self._full_text = text
+        self._offset = 0            # pixels scrolled into the text
+        self._dir = 1               # +1 gliding left-ward, -1 coming back
+        self._pause_left = 0        # countdown of pause ticks
+        self._timer = QTimer(self)
+        self._timer.setInterval(self._TICK_MS)
+        self._timer.timeout.connect(self._tick)
+        self._needs_scroll = False
+        self._fm = QFontMetrics(self.font())
+
+    def setText(self, text: str):   # noqa: N802 (Qt naming)
+        self._full_text = text
+        self._offset = 0
+        self._dir = 1
+        self._pause_left = self._EDGE_PAUSE_TICKS
+        super().setText(text)
+        self._fm = QFontMetrics(self.font())
+        self._update_scroll_state()
+
+    def text(self) -> str:          # noqa: N802 (Qt naming)
+        return self._full_text
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._update_scroll_state()
+
+    def _update_scroll_state(self):
+        text_w = self._fm.horizontalAdvance(self._full_text)
+        avail = max(0, self.width() - 8)   # small inner margin
+        self._needs_scroll = text_w > avail and avail > 0
+        if not self._needs_scroll:
+            self._timer.stop()
+            self._offset = 0
+            if self._full_text:
+                super().setText(self._full_text)
+        elif not self._timer.isActive():
+            self._timer.start()
+
+    def _tick(self):
+        if not self.isVisible() or not self._needs_scroll:
+            return
+        text_w = self._fm.horizontalAdvance(self._full_text)
+        avail = max(0, self.width() - 8)
+        max_offset = max(0, text_w - avail)
+        if max_offset == 0:
+            self._timer.stop()
+            return
+        if self._pause_left > 0:
+            self._pause_left -= 1
+            return
+        self._offset += self._SCROLL_PX_PER_TICK * self._dir
+        if self._offset >= max_offset:
+            self._offset = max_offset
+            self._dir = -1
+            self._pause_left = self._EDGE_PAUSE_TICKS
+        elif self._offset <= 0:
+            self._offset = 0
+            self._dir = 1
+            self._pause_left = self._EDGE_PAUSE_TICKS
+        elided_src = self._full_text
+        # Scroll by prefixing spaces equal to pixels consumed is imprecise;
+        # instead clip via rich-text padding: draw from offset using QTextEdit
+        # is heavy — the clean way is a custom paint, so do that:
+        self.update()   # trigger paintEvent, which applies the offset
+
+    def paintEvent(self, e):
+        if not self._needs_scroll:
+            super().paintEvent(e)
+            return
+        try:
+            p = QPainter(self)
+            flags = int(Qt.AlignmentFlag.AlignVCenter) | int(Qt.TextFlag.TextSingleLine)
+            rect = self.rect().adjusted(2, 0, -2, 0)
+            p.setClipRect(rect)
+            p.drawText(rect.translated(-self._offset, 0), flags, self._full_text)
+            # A soft fade-out on the trailing edge so the scrolling text
+            # doesn't pop in at the boundary.
+            grad = QLinearGradient(rect.right() - 16, 0, rect.right(), 0)
+            grad.setColorAt(0.0, QColor(0, 0, 0, 0))
+            grad.setColorAt(1.0, QColor(self.palette().color(self.backgroundRole())))
+            p.fillRect(rect.right() - 16, 0, 16, self.height(), QBrush(grad))
+            grad2 = QLinearGradient(rect.left(), 0, rect.left() + 16, 0)
+            grad2.setColorAt(0.0, QColor(self.palette().color(self.backgroundRole())))
+            grad2.setColorAt(1.0, QColor(0, 0, 0, 0))
+            p.fillRect(rect.left(), 0, 16, self.height(), QBrush(grad2))
+            p.end()
+        except Exception as ex:
+            log.warning(f"MarqueeLabel paint error: {ex}")
+            super().paintEvent(e)
+
+
+# ============================================================================
 # IconButton
 # ============================================================================
 class IconButton(QPushButton):
@@ -125,7 +234,12 @@ class IconButton(QPushButton):
         px = max(6, round(float(v)))
         if px != self.icon_size:
             self.icon_size = px
-            super().setIconSize(QSize(px, px))
+            # Re-render the SVG at the animated size so the glyph itself
+            # scales — QIcon.pixmap(upscale) blurs and, worse, the cached
+            # pixmap's devicePixelRatio made the drawn glyph land off-center
+            # (the "circle grows to one side" artifact).
+            self.update_icon()
+            self.update()
 
     def _animate_icon_to(self, target: int):
         self._breath_anim.stop()
@@ -178,12 +292,16 @@ class IconButton(QPushButton):
                 p.setPen(QPen(QColor(255, 255, 255, 34), 1))
                 p.setBrush(QBrush(fill))
                 p.drawEllipse(rect)
-            # Draw the icon centered (we bypass QPushButton's style chrome —
-            # without a stylesheet Fusion would paint a bevel frame here).
+            # Draw the icon EXACTLY centered in logical pixels: deviceRatio-
+            # aware sizing keeps the glyph symmetric inside the growing
+            # circle from every direction.
             pm = self.icon().pixmap(self.iconSize())
             if not pm.isNull():
-                ix = (self.width() - pm.width()) // 2
-                iy = (self.height() - pm.height()) // 2
+                dpr = pm.devicePixelRatio() or 1.0
+                lw = int(pm.width() / dpr)    # logical (CSS-px) size
+                lh = int(pm.height() / dpr)
+                ix = (self.width() - lw) // 2
+                iy = (self.height() - lh) // 2
                 p.drawPixmap(ix, iy, pm)
             p.end()
         except Exception as ex:
@@ -199,10 +317,10 @@ class IconButton(QPushButton):
         else:
             color = self._theme["muted"]
         dpr = get_dpr()
-        pm = render_icon(self.svg_string, self.icon_size_base, color, dpr)
+        # Render at the CURRENT animated size (not the base) so the glyph
+        # grows with the circle, pixel-crisp, around a common center.
+        pm = render_icon(self.svg_string, self.icon_size, color, dpr)
         self.setIcon(QIcon(pm))
-        # NOTE: icon *size* is animated via the icon_px property; here we only
-        # refresh the pixmap so the color/shape matches the current state.
         super().setIconSize(QSize(self.icon_size, self.icon_size))
         self._refresh_style()
 
@@ -337,14 +455,18 @@ class PlayerBar(QFrame):
         self.cover_thumb.setFixedSize(56, 56)
         self.cover_thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._cover_thumb_pm = None
-        # Clicking the cover or the title/artist asks the main window to
-        # open the track info dialog (wired via this callback attribute).
-        self.cover_click_handler = None   # set by MainWindow
+        # Clicking the cover opens the fullscreen player, clicking the
+        # title/artist opens the track info dialog (wired via these callback
+        # attributes — set by MainWindow).
+        self.cover_click_handler = None   # → fullscreen player
+        self.info_click_handler = None    # → track info dialog
         self.cover_thumb.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.cover_thumb.setToolTip("Open fullscreen player")
+        self.cover_thumb.mousePressEvent = self._on_cover_click
 
-        self.title_label = QLabel("No track selected")
+        self.title_label = MarqueeLabel("No track selected")
         self.title_label.setObjectName("BarTitle")
-        self.artist_label = QLabel("—")
+        self.artist_label = MarqueeLabel("—")
         self.artist_label.setObjectName("BarArtist")
         info_layout = QVBoxLayout()
         info_layout.setContentsMargins(0, 0, 0, 0)
@@ -505,14 +627,26 @@ class PlayerBar(QFrame):
         self._cover_thumb_pm = pm
         self._refresh_cover_thumb()
 
-    def _on_info_click(self, event):
-        """Cover / title / artist clicked → ask the main window to open the
-        track info dialog (handler is assigned by MainWindow after setup)."""
+    def _on_cover_click(self, event):
+        """Cover thumbnail clicked → open the fullscreen player."""
         from PyQt6.QtCore import QEvent
         if (event.type() == QEvent.Type.MouseButtonPress
                 and event.button() == Qt.MouseButton.LeftButton
                 and callable(self.cover_click_handler)):
             self.cover_click_handler()
+            try:
+                event.accept()
+            except Exception:
+                pass
+
+    def _on_info_click(self, event):
+        """Title / artist clicked → ask the main window to open the
+        track info dialog (handler is assigned by MainWindow after setup)."""
+        from PyQt6.QtCore import QEvent
+        if (event.type() == QEvent.Type.MouseButtonPress
+                and event.button() == Qt.MouseButton.LeftButton
+                and callable(self.info_click_handler)):
+            self.info_click_handler()
 
     def update_play_button(self, playing: bool):
         if playing:
@@ -698,7 +832,14 @@ class TrackRowDelegate(QStyledItemDelegate):
         number = index.data(self.TITLE_ROLE) or ""
         playing = bool(index.data(Qt.ItemDataRole.UserRole + 2))
 
-        t = self.theme
+        t = self.theme or {}
+        # Fall back to the brand theme when no palette has been assigned —
+        # tests (and any pre-theme painting) may construct the delegate with
+        # an empty dict; a paint must never raise for missing theme keys.
+        if not t:
+            from config import Theme as _Theme
+            t = _Theme.get("royal_gold")
+            self.theme = t
         rect = option.rect.adjusted(6, 3, -6, -3)
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
         hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
@@ -720,6 +861,18 @@ class TrackRowDelegate(QStyledItemDelegate):
             p.setBrush(hover)
             p.drawRoundedRect(rect, radius, radius)
 
+        # Playing rows get a slim accent bar on the left edge — a clearer
+        # "now playing" cue than color alone (works in all 12 themes).
+        if playing:
+            bar_w = 3
+            bar_rect = QRect(rect.left() + 1, rect.top() + 8,
+                             bar_w, rect.height() - 16)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(t["gold"]))
+            p.drawRoundedRect(bar_rect, bar_w / 2, bar_w / 2)
+            # shift content right so text never overlaps the bar
+            rect = rect.adjusted(bar_w + 4, 0, 0, 0)
+
         # Colors — playing/selected rows glow gold; others stay neutral
         if playing or selected:
             num_col = QColor(t["gold"])
@@ -731,10 +884,12 @@ class TrackRowDelegate(QStyledItemDelegate):
         x_num = rect.left() + 8
         x_text = x_num + (34 if number else 0)
 
-        # Base font — resolve first so pointSizeF() is never -1 (unset),
-        # then clamp every derived size to a sane positive minimum.
+        # Base font — clone the option font and clamp every derived size to a
+        # sane positive minimum. (An earlier version called
+        # base.resolve(QFont().resolve()) here; PyQt6 6.11's resolve() needs an
+        # explicit argument, so that line raised TypeError on every paint and
+        # left every row's text undrawn — titles "invisible" in all themes.)
         base = QFont(option.font)
-        base.resolve(QFont().resolve())
         base_size = base.pointSizeF()
         if base_size <= 0:
             base_size = 9.0
@@ -780,41 +935,413 @@ def _track_item_text(title: str, artist: str) -> str:
     return f"{title}|{artist}"
 
 
+def _list_subdirs(dir_path: str) -> list:
+    """Sorted visible subdirectories of dir_path ([] on any error)."""
+    try:
+        return sorted(d for d in os.listdir(dir_path)
+                      if os.path.isdir(os.path.join(dir_path, d))
+                      and not d.startswith("."))
+    except OSError:
+        return []
+
+
+def _dir_has_subdirs(dir_path: str) -> bool:
+    """True if dir_path contains at least one visible subdirectory."""
+    try:
+        for d in os.listdir(dir_path):
+            if d.startswith("."):
+                continue
+            if os.path.isdir(os.path.join(dir_path, d)):
+                return True
+    except OSError:
+        pass
+    return False
+
+
+def _pixmap_to_png_bytes(pm) -> "bytes | None":
+    """PNG bytes for embedding a pixmap into rich text (None on failure)."""
+    try:
+        from PyQt6.QtCore import QBuffer
+        ba = QBuffer()
+        ba.open(QBuffer.OpenModeFlag.WriteOnly)
+        pm.save(ba, "PNG")
+        return bytes(ba.data()) or None
+    except Exception:
+        return None
+
+
 # ============================================================================
-# LoadingOverlay — glassy "Loading…" veil shown during slow operations
+# StatTrackRow — one "Most Played" row on the stats page
+# ============================================================================
+# ============================================================================
+# StatsChartBar — animated horizontal bar chart of the top tracks
+# ============================================================================
+class StatsChartBar(QWidget):
+    """Gradient bar chart with staggered grow-in animation. Bars are drawn
+    from the active theme accents; hovering a bar highlights it and shows
+    the exact play count. Data set via set_data([(label, value), ...])."""
+
+    BAR_H = 22
+    GAP = 10
+
+    def __init__(self, theme: dict, parent=None):
+        super().__init__(parent)
+        self._theme = theme
+        self._rows = []            # [(label, value)]
+        self._max_v = 1
+        self._progress = 1.0       # 0..1 grow-in animation
+        self._hover_idx = -1
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(650)
+        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._anim.valueChanged.connect(self._on_anim)
+        self.setMinimumHeight(60)
+        self.setMouseTracking(True)
+
+    def set_theme(self, theme: dict):
+        self._theme = theme
+        self.update()
+
+    def _on_anim(self, v):
+        self._progress = float(v)
+        self.update()
+
+    def set_data(self, rows):
+        self._rows = list(rows)[:8]
+        self._max_v = max((v for _, v in self._rows), default=1) or 1
+        self._hover_idx = -1
+        self.setMinimumHeight(max(60, len(self._rows) * (self.BAR_H + self.GAP) + 6))
+        self._progress = 0.0
+        self._anim.stop()
+        self._anim.setStartValue(0.0)
+        self._anim.setEndValue(1.0)
+        self._anim.start()
+
+    def leaveEvent(self, e):
+        self._hover_idx = -1
+        self.update()
+        super().leaveEvent(e)
+
+    def mouseMoveEvent(self, e):
+        y = e.position().y()
+        idx = -1
+        for i in range(len(self._rows)):
+            top = i * (self.BAR_H + self.GAP)
+            if top <= y <= top + self.BAR_H:
+                idx = i
+                break
+        if idx != self._hover_idx:
+            self._hover_idx = idx
+            self.update()
+        super().mouseMoveEvent(e)
+
+    def paintEvent(self, e):
+        if not self._rows:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        t = self._theme
+        fm = self.fontMetrics()
+        w = self.width()
+        label_w = min(190, max(90, int(w * 0.32)))
+        count_w = 44
+        track_x = label_w + 10
+        track_w = max(40, w - track_x - count_w - 8)
+        for i, (label, value) in enumerate(self._rows):
+            top = i * (self.BAR_H + self.GAP)
+            # staggered grow-in: bar i starts a bit later
+            local = max(0.0, min(1.0, (self._progress - i * 0.06) / 0.7))
+            frac = (value / self._max_v) * local
+            hovered = (i == self._hover_idx)
+            # label
+            p.setPen(QPen(QColor(t["text"] if not hovered else t["gold_light"])))
+            p.setFont(self.font())
+            elided = fm.elidedText(label, Qt.TextElideMode.ElideRight,
+                                   label_w)
+            p.drawText(QRect(0, top, label_w, self.BAR_H),
+                       int(Qt.AlignmentFlag.AlignVCenter), elided)
+            # bar track
+            bar = QRect(track_x, top + 5, track_w, self.BAR_H - 10)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(t["panel_bg_2"]))
+            p.drawRoundedRect(bar, (self.BAR_H - 10) // 2, (self.BAR_H - 10) // 2)
+            # gradient fill — BOTH stops as explicit QPointF: the mixed
+            # QPoint/QPointF overload native-crashes this PyQt6 build.
+            grad = QLinearGradient(
+                QPointF(float(bar.left()), float(bar.top())),
+                QPointF(float(bar.right()), float(bar.top())))
+            grad.setColorAt(0.0, QColor(t["gold_deep"]))
+            grad.setColorAt(1.0, QColor(t["gold_light"] if hovered else t["gold"]))
+            p.setBrush(QBrush(grad))
+            fill_w = max(6, int(bar.width() * frac)) if frac > 0 else 0
+            if fill_w:
+                cap = QRect(bar.x(), bar.y(), fill_w, bar.height())
+                p.drawRoundedRect(cap, bar.height() // 2, bar.height() // 2)
+            # value
+            p.setPen(QPen(QColor(t["gold_light"])))
+            shown = int(round(value * local))
+            p.drawText(QRect(w - count_w, top, count_w, self.BAR_H),
+                       int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight),
+                       f"{shown}×")
+        p.end()
+
+
+class StatTrackRow(QFrame):
+    """Medal + cover + title/artist + play count + a ▶ button. Double-click
+    on the row also plays the track. Clicking ▶ delegates to the MainWindow
+    callback so the track joins a proper playlist context."""
+
+    def __init__(self, rank: int, path: str, title: str, artist: str,
+                 count: int, cover_pm, theme: dict, on_play, parent=None):
+        super().__init__(parent)
+        self.path = path
+        self._on_play = on_play
+        self.theme = theme
+        self.setObjectName("TrackList")
+        self.setFixedHeight(52)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        t = theme
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(10, 6, 10, 6)
+        lay.setSpacing(10)
+
+        medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(rank, str(rank))
+        rank_lbl = QLabel(medal)
+        rank_lbl.setFixedWidth(26)
+        rank_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        rank_lbl.setStyleSheet(f"color: {t['gold']}; font-weight: 700; font-size: 14px;")
+        lay.addWidget(rank_lbl)
+
+        cov = QLabel()
+        cov.setFixedSize(38, 38)
+        cov.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        if cover_pm is not None and not cover_pm.isNull():
+            cov.setPixmap(cover_pm.scaled(
+                38, 38, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                Qt.TransformationMode.SmoothTransformation))
+        else:
+            cov.setPixmap(render_icon(Icon.MUSIC_NOTE, 24, t["muted"], get_dpr()))
+        cov.setStyleSheet(
+            f"border-radius: 8px; border: 1px solid {t['border']};")
+        lay.addWidget(cov)
+
+        col = QVBoxLayout()
+        col.setSpacing(1)
+        title_lbl = QLabel(title)
+        title_lbl.setStyleSheet(f"color: {t['text']}; font-weight: 600; font-size: 13px;")
+        title_lbl.setWordWrap(False)
+        artist_lbl = QLabel(artist or "—")
+        artist_lbl.setStyleSheet(f"color: {t['muted']}; font-size: 11px;")
+        artist_lbl.setWordWrap(False)
+        col.addWidget(title_lbl)
+        col.addWidget(artist_lbl)
+        lay.addLayout(col, 1)
+
+        cnt_lbl = QLabel(f"{count}×")
+        cnt_lbl.setStyleSheet(f"color: {t['gold_light']}; font-weight: 600; font-size: 13px;")
+        lay.addWidget(cnt_lbl)
+
+        self.play_btn = QPushButton()
+        self.play_btn.setFixedSize(34, 34)
+        self.play_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.play_btn.setToolTip(f"Play “{title}”")
+        self.play_btn.setIcon(QIcon(render_icon(Icon.PLAY, 16, t["gold_light"], get_dpr())))
+        self.play_btn.setIconSize(QSize(16, 16))
+        self.play_btn.setStyleSheet(
+            f"QPushButton {{ background: {t['panel_bg_2']}; border: none;"
+            f" border-radius: 17px; }}"
+            f"QPushButton:hover {{ background: {t['gold']}; }}")
+        self.play_btn.clicked.connect(self._emit_play)
+        lay.addWidget(self.play_btn)
+
+    def _emit_play(self):
+        try:
+            self._on_play(self.path)
+        except Exception as ex:
+            log.warning(f"stats play failed: {ex}")
+
+    def mouseDoubleClickEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._emit_play()
+        super().mouseDoubleClickEvent(e)
+
+    def set_theme(self, theme: dict):
+        self.theme = theme
+        t = theme
+        self.play_btn.setIcon(QIcon(render_icon(Icon.PLAY, 16, t["gold_light"], get_dpr())))
+        self.play_btn.setStyleSheet(
+            f"QPushButton {{ background: {t['panel_bg_2']}; border: none;"
+            f" border-radius: 17px; }}"
+            f"QPushButton:hover {{ background: {t['gold']}; }}")
+
+
+# ============================================================================
+# MarqueeLabel — QLabel that scrolls overflow text horizontally (looping)
+# ============================================================================
+class MarqueeLabel(QLabel):
+    """When the text is wider than the widget it scrolls continuously
+    (left, gap, re-enter) so a long track title stays fully readable.
+    Short text behaves exactly like a static centered QLabel."""
+
+    GAP_PX = 48            # breathing room between the two copies
+    SPEED_PX_PER_S = 28    # slow, classy crawl
+    EDGE_PAD_PX = 10       # visual padding at both ends
+
+    def __init__(self, text: str = "", parent=None):
+        super().__init__(text, parent)
+        self._offset = 0.0
+        self._full_width = 0      # width of the full text (1 copy)
+        self._timer = QTimer(self)
+        self._timer.setInterval(33)   # ~30 fps — smooth, cheap
+        self._timer.timeout.connect(self._tick)
+        self._recalc()
+
+    # -- text management -------------------------------------------------
+    def setMarqueeText(self, text: str):
+        """Set label text (restarts the scroll when text changes)."""
+        if text == self.text():
+            return
+        self.setText(text)
+        self._offset = 0
+        self._recalc()
+
+    def _recalc(self):
+        fm = self.fontMetrics()
+        self._full_width = max(0, fm.horizontalAdvance(self.text()))
+        overflow = (self._full_width > max(1, self.width() - 2 * self.EDGE_PAD_PX))
+        if overflow and not self.isVisibleTo(self.parentWidget()) is None:
+            pass
+        if overflow and not self._timer.isActive():
+            self._timer.start()
+        elif not overflow:
+            self._timer.stop()
+            self._offset = 0
+        self.update()
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._recalc()
+
+    def _tick(self):
+        # Total loop = text width + gap; wraps back to the start seamlessly
+        self._offset = (self._offset + self.SPEED_PX_PER_S * 0.033) % \
+            (self._full_width + self.GAP_PX)
+        self.update()
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p.setPen(self.palette().color(self.foregroundRole()))
+        w = self.width()
+        overflow = self._full_width > (w - 2 * self.EDGE_PAD_PX)
+        if not overflow:
+            # Static path — identical to a normal centered label
+            p.drawText(self.rect(), int(self.alignment()), self.text())
+            p.end()
+            return
+        # Clip the scrolling region so the copies never bleed outside
+        p.setClipRect(self.rect())
+        fm = self.fontMetrics()
+        y = (self.height() + fm.ascent() - fm.descent()) // 2
+        total = self._full_width + self.GAP_PX
+        # Copy 1 scrolls left; copy 2 follows after the gap
+        x1 = self.EDGE_PAD_PX - self._offset
+        x2 = x1 + total
+        p.drawText(QPointF(x1, y), self.text())
+        p.drawText(QPointF(x2, y), self.text())
+        # Soft fade masks at both edges (the theme window bg works as both
+        # text backdrop and fade source in every theme)
+        t = getattr(self.parent(), "theme", None) or {}
+        bg = QColor(t.get("window_bg", "#0a0805"))
+        edge = 16
+        grad = QLinearGradient(QPointF(0, 0), QPointF(edge, 0))
+        grad.setColorAt(0.0, QColor(bg.red(), bg.green(), bg.blue(), 255))
+        grad.setColorAt(1.0, QColor(bg.red(), bg.green(), bg.blue(), 0))
+        p.fillRect(0, 0, edge, self.height(), QBrush(grad))
+        grad = QLinearGradient(QPointF(w - edge, 0), QPointF(w, 0))
+        grad.setColorAt(0.0, QColor(bg.red(), bg.green(), bg.blue(), 0))
+        grad.setColorAt(1.0, QColor(bg.red(), bg.green(), bg.blue(), 255))
+        p.fillRect(w - edge, 0, edge, self.height(), QBrush(grad))
+        p.end()
+
+
+# ============================================================================
+# LoadingOverlay — glassy "Loading…" veil with a themed three-arc spinner
 # ============================================================================
 class LoadingOverlay(QWidget):
-    """Semi-transparent overlay with a spinner-ish label. Parent it to the
-    main window, call `show_loading(text)` / `hide_loading()`."""
+    """Themed multi-arc loading indicator.
+
+    NON-BLOCKING by design: the user asked to keep browsing other sections
+    while something loads, so this is a compact glass card pinned to the
+    bottom-right corner — it never covers or steals clicks from the rest of
+    the window (WA_TransparentForMouseEvents on the veil)."""
+    SPIN_MS = 1100          # one full revolution
+    CARD_W, CARD_H = 260, 116
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        # Clicks pass THROUGH the veil; only the card is decoration. The
+        # rest of the app stays fully interactive during any load.
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         self.setVisible(False)
+        self._angle = 0          # spinner rotation (degrees)
+        self._fade = 0.0         # 0..1 appearance fade for the card
         self._dots = 0
         self._timer = QTimer(self)
         self._timer.setInterval(350)
         self._timer.timeout.connect(self._tick)
+        # High-frequency spinner clock — 60 fps-capable, cheap (one repaint
+        # of the card region while visible, zero cost when hidden)
+        self._spin_timer = QTimer(self)
+        self._spin_timer.setInterval(16)
+        self._spin_timer.timeout.connect(self._spin_tick)
+        # Fade-in controller for a soft entrance
+        self._fade_timer = QTimer(self)
+        self._fade_timer.setInterval(16)
+        self._fade_timer.timeout.connect(self._fade_tick)
 
         lay = QVBoxLayout(self)
-        lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.setContentsMargins(0, 0, 24, 56)   # anchor bottom-right
+        lay.addStretch(1)
+        row = QHBoxLayout()
+        row.addStretch(1)
         card = QFrame()
-        card.setFixedSize(220, 90)
+        card.setFixedSize(self.CARD_W, self.CARD_H)
         card.setObjectName("LoadingCard")
-        card_lay = QVBoxLayout(card)
-        card_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        card.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.label = QLabel("Loading")
         self.label.setObjectName("LoadingLabel")
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        card_lay = QVBoxLayout(card)
+        card_lay.setContentsMargins(0, 14, 0, 0)
+        card_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._spinner_host = _SpinnerCanvas(card)
+        self._spinner_host.setFixedSize(64, 64)   # bigger, easier to see
+        card_lay.addWidget(self._spinner_host, 0, Qt.AlignmentFlag.AlignCenter)
+        card_lay.addSpacing(6)
         card_lay.addWidget(self.label)
-        lay.addWidget(card, alignment=Qt.AlignmentFlag.AlignCenter)
+        row.addWidget(card)
+        lay.addLayout(row)
+        self._card = card
 
+    # -- timers ---------------------------------------------------------
     def _tick(self):
         self._dots = (self._dots + 1) % 4
         base = getattr(self, "_base_text", "Loading")
         self.label.setText(base + "." * self._dots)
 
+    def _spin_tick(self):
+        # 6°/frame @60fps ≈ 1.0 s/rev; the canvas paints itself from this
+        self._angle = (self._angle + 6) % 360
+        self._spinner_host.set_angle(self._angle, self._fade)
+
+    def _fade_tick(self):
+        self._fade = min(1.0, self._fade + 0.09)
+        if self._fade >= 1.0:
+            self._fade_timer.stop()
+
+    # -- public API ------------------------------------------------------
     def show_loading(self, text: str = "Loading"):
         self._base_text = text
         self.label.setText(text)
@@ -822,25 +1349,105 @@ class LoadingOverlay(QWidget):
         self.setGeometry(self.parentWidget().rect())
         self.raise_()
         self.setVisible(True)
+        # Sync spinner + card theme colors with the CURRENT theme
+        t = getattr(self.parent(), "theme", None) or {}
+        self._spinner_host.set_theme(t)
+        self._spinner_host.set_stroke(5.2)   # thick, visible at a glance
+        card = self._card
+        card.setStyleSheet(
+            f"#LoadingCard {{ background: rgba({_rgba(t.get('panel_bg', '#241d17'))}, 242);"
+            f" border: 1px solid {t.get('border', '#372d1c')};"
+            f" border-radius: 16px; }}")
         self._timer.start()
-        QApplication.processEvents()   # paint the overlay before the heavy work
+        self._spin_timer.start()
+        self._fade = 0.0
+        self._fade_timer.start()
+        QApplication.processEvents()   # paint the indicator before the heavy work
 
     def hide_loading(self):
         self._timer.stop()
+        self._spin_timer.stop()
+        self._fade_timer.stop()
         self.setVisible(False)
 
     def paintEvent(self, e):
+        # No dark veil anymore — the corner card is enough, and the window
+        # stays fully clickable underneath.
+        pass
+
+
+def _rgba(hex_color: str) -> str:
+    """'#rrggbb' -> 'r,g,b' (for QSS rgba())."""
+    try:
+        c = QColor(hex_color)
+        return f"{c.red()},{c.green()},{c.blue()}"
+    except Exception:
+        return "36,29,23"
+
+
+class _SpinnerCanvas(QWidget):
+    """Three counter-rotating rounded arcs in theme accent tones — smooth,
+    DPI-crisp, and colored by the active theme (no downloaded asset needed)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._angle = 0
+        self._fade = 0.0
+        self._stroke = 3.4
+        self._core = QColor("#d4a85a")
+        self._light = QColor("#ffd982")
+        self._deep = QColor("#b88a33")
+
+    def set_theme(self, t: dict):
+        try:
+            self._core = QColor(t.get("gold", "#d4a85a"))
+            self._light = QColor(t.get("gold_light", "#ffd982"))
+            self._deep = QColor(t.get("gold_deep", "#b88a33"))
+        except Exception:
+            pass
+
+    def set_stroke(self, w: float):
+        self._stroke = w
+        self.update()
+
+    def set_angle(self, angle: float, fade: float):
+        self._angle = angle
+        self._fade = fade
+        self.update()
+
+    def paintEvent(self, e):
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor(0, 0, 0, 120))
-        # Card background follows the theme
-        t = getattr(self.parent(), "theme", None) or {}
-        card_color = QColor(t.get("panel_bg", "#241d17"))
-        card_color.setAlpha(240)
-        p.setPen(QPen(QColor(t.get("gold", "#d4a85a")), 1))
-        p.setBrush(QBrush(card_color))
-        p.drawRoundedRect(
-            (self.width() - 220) // 2, (self.height() - 90) // 2, 220, 90,
-            14, 14)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        w, h = self.width(), self.height()
+        rect = QRectF(self.rect()).adjusted(4, 4, -4, -4)
+        p.translate(w / 2, h / 2)
+        # Outer arc — main accent, 270° sweep, rotates clockwise
+        pen = QPen(self._core)
+        pen.setWidthF(self._stroke)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        p.setPen(pen)
+        p.save()
+        p.rotate(self._angle)
+        p.drawArc(rect, 90 * 16, -270 * 16)
+        p.restore()
+        # Middle arc — lighter tone, counter-rotating, 140° sweep
+        pen = QPen(self._light)
+        pen.setWidthF(max(2.2, self._stroke * 0.72))
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        p.setPen(pen)
+        p.save()
+        p.rotate(-self._angle * 1.6)
+        p.drawArc(rect.adjusted(6, 6, -6, -6), 0 * 16, 140 * 16)
+        p.restore()
+        # Inner dot — deep accent, orbiting
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(self._deep)
+        inner = rect.adjusted(12, 12, -12, -12)
+        a = math.radians(-self._angle * 2)
+        cx = inner.center().x() + (inner.width() / 2) * math.cos(a)
+        cy = inner.center().y() + (inner.height() / 2) * math.sin(a)
+        p.drawEllipse(QPointF(cx, cy), 3.2, 3.2)
+        p.end()
 
 
 class SideRail(QFrame):
@@ -972,6 +1579,67 @@ class TagLoaderThread(QThread):
 
 
 # ============================================================================
+# Albums worker thread — groups untagged tracks + decodes covers off-UI
+# ============================================================================
+class AlbumsWorkerThread(QThread):
+    """Resolves the album tag for untagged tracks (mutagen, slow) and picks
+    one cover per group. Emits one album group at a time so the grid fills
+    progressively instead of freezing the UI."""
+    album_group_ready = pyqtSignal(str, list, object)
+
+    def __init__(self, untagged: list, parent=None):
+        super().__init__(parent)
+        self.untagged = list(untagged)
+        self._cancel = False
+
+    def cancel(self):
+        self._cancel = True
+
+    def run(self):
+        from mutagen import File as MutagenFile
+        import coverart as _ca
+
+        def _first_tag(val):
+            if isinstance(val, (list, tuple)):
+                return str(val[0]) if val else ""
+            return str(val) if val else ""
+
+        groups = {}
+        order = []
+        for p in self.untagged:
+            if self._cancel:
+                return
+            album = ""
+            try:
+                m = MutagenFile(p, easy=True)
+                if m is not None and m.tags:
+                    album = _first_tag(m.tags.get("album"))
+            except Exception:
+                pass
+            key = album if album else "Unknown Album"
+            if key not in groups:
+                groups[key] = []
+                order.append(key)
+            groups[key].append(p)
+        # Emit one group per signal — cover picked here (bytes cross the
+        # thread boundary, QPixmap never does).
+        for name in order:
+            if self._cancel:
+                return
+            paths = groups[name]
+            cover_data = None
+            for p in paths[:4]:
+                try:
+                    data = _ca.get_cover_bytes(p)
+                except Exception:
+                    data = None
+                if data:
+                    cover_data = data
+                    break
+            self.album_group_ready.emit(name, list(paths), cover_data)
+
+
+# ============================================================================
 # Main Window
 # ============================================================================
 class MainWindow(QMainWindow):
@@ -1013,6 +1681,11 @@ class MainWindow(QMainWindow):
         self.user_is_seeking = False
         self.sort_mode = SortMode.TITLE
         self.search_filter = ""
+        # Folder filter from the folder tree — persisted while the app runs
+        # so search/sort changes don't silently reset it (FUNC-6).
+        self._folder_filter = None
+        # Search typing debounce timer (created lazily in _on_search_changed)
+        self._search_debounce = None
 
         # Settings
         self.auto_rescan = True
@@ -1024,6 +1697,9 @@ class MainWindow(QMainWindow):
         self.sleep_timer_active = False
         self.sleep_timer_minutes = 30
         self._sleep_timer = None
+        # Fullscreen visualizer (animated background) — persisted, toggled
+        # in Settings → Interface and on the fullscreen top bar itself.
+        self.visualizer_enabled = True
 
         # Audio
         self.audio = AudioBackend(self)
@@ -1039,8 +1715,12 @@ class MainWindow(QMainWindow):
 
         # Play statistics (user data — survives updates)
         try:
-            from playstats import PlayStats
+            from playstats import PlayStats, set_search_roots
             self.stats = PlayStats(config_path().parent / "stats.json")
+            # Moved-file resolution needs to know where music lives; the
+            # full folder set arrives with the async config load, so seed
+            # with what's known now and refresh after config + every scan.
+            set_search_roots(list(getattr(self, "added_folders", []) or []))
             self._stats_timer = QTimer(self)
             self._stats_timer.setInterval(30_000)   # flush every 30 s
             self._stats_timer.timeout.connect(self._flush_stats)
@@ -1057,12 +1737,15 @@ class MainWindow(QMainWindow):
 
         # Track-change toast (window hidden only)
         self._toast_enabled = True
+        # Per-track listening meter (70% credit rule for stats)
+        self._listened_ms = 0
         self._last_toast_key = None
 
         # Threads
         self.scanner = None
         self._scan_results_pending = None
         self._cover_loader = None
+        self._albums_worker = None
 
         # Mini player
         self.mini_player = None
@@ -1164,6 +1847,9 @@ class MainWindow(QMainWindow):
         find and raise this window."""
         try:
             from PyQt6.QtCore import QSharedMemory
+            # Keep a reference for the process lifetime — a parent-less local
+            # used to be garbage-collected the moment this function returned,
+            # destroying the segment and silently disabling the feature.
             shm = QSharedMemory("GoldenMusic_WindowTitle")
             # Leftover segment from a crashed run — clean it up
             if shm.attach(QSharedMemory.AccessMode.ReadWrite):
@@ -1171,6 +1857,7 @@ class MainWindow(QMainWindow):
             data = self.windowTitle().encode("utf-8") + b"\x00"
             if shm.create(len(data)):
                 shm.data()[:len(data)] = data
+                self._title_shm = shm
         except Exception as e:
             log.debug(f"title shared memory unavailable: {e}")
 
@@ -1285,8 +1972,11 @@ class MainWindow(QMainWindow):
         # Player bar
         self.player_bar = PlayerBar(self.theme)
         outer.addWidget(self.player_bar)
-        # Cover / title / artist click → track info dialog
-        self.player_bar.cover_click_handler = self._on_bar_info_clicked
+        # Cover click → fullscreen player; title/artist click →
+        # track info dialog (separate handlers so the cover opens the
+        # immersive view while the text still shows track details).
+        self.player_bar.cover_click_handler = self._toggle_fullscreen_player
+        self.player_bar.info_click_handler = self._on_bar_info_clicked
 
         # Signals
         self.player_bar.like_btn.clicked.connect(self._on_like_toggled)
@@ -1338,8 +2028,24 @@ class MainWindow(QMainWindow):
         self.folder_tree.setObjectName("TrackList")
         self.folder_tree.setMinimumWidth(140)
         self.folder_tree.setMaximumWidth(220)
-        self.folder_tree.setStyleSheet(f"QTreeWidget {{ background: {self.theme['panel_bg']}; border: 1px solid {self.theme['border']}; border-radius: 10px; padding: 6px; outline: 0; }} QTreeWidget::item {{ padding: 6px 4px; border-radius: 4px; outline: 0; }} QTreeWidget::item:hover {{ background: {self.theme['panel_bg_2']}; outline: 0; }} QTreeWidget::item:selected {{ background: {self.theme['active']}; color: {self.theme['gold_light']}; outline: 0; }}")
+        self.folder_tree.setStyleSheet(
+            f"QTreeWidget {{ background: {self.theme['panel_bg']}; border: 1px solid {self.theme['border']}; border-radius: 10px; padding: 6px; outline: 0; }}"
+            f" QTreeWidget::item {{ padding: 8px 6px; border-radius: 8px; margin: 1px 2px; outline: 0; background: transparent; }}"
+            f" QTreeWidget::item:hover {{ background: {self.theme['panel_bg_2']}; outline: 0; }}"
+            f" QTreeWidget::item:selected {{ background: transparent; color: {self.theme['gold_light']}; outline: 0; border: none; }}"
+            f" QTreeWidget::item:focus {{ background: transparent; outline: 0; border: none; }}"
+        )
+        # No selection rectangle at all behind folder names — clicks are
+        # handled in code and the folder stays visually clean.
+        self.folder_tree.setSelectionMode(
+            QAbstractItemView.SelectionMode.NoSelection)
+        self.folder_tree.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.folder_tree.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu)
         self.folder_tree.itemClicked.connect(self._on_folder_tree_click)
+        self.folder_tree.itemExpanded.connect(self._on_folder_tree_expanded)
+        self.folder_tree.customContextMenuRequested.connect(
+            self._on_folder_tree_context_menu)
         left_split.addWidget(self.folder_tree)
 
         # Track list
@@ -1365,12 +2071,12 @@ class MainWindow(QMainWindow):
         self.cover_label = CoverLabel()
         right_col.addWidget(self.cover_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        self.now_title = QLabel("No track selected")
+        self.now_title = MarqueeLabel("No track selected")
         self.now_title.setObjectName("NowTitle")
         self.now_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         right_col.addWidget(self.now_title)
 
-        self.now_artist = QLabel("Add a folder to get started")
+        self.now_artist = MarqueeLabel("Add a folder to get started")
         self.now_artist.setObjectName("NowArtist")
         self.now_artist.setAlignment(Qt.AlignmentFlag.AlignCenter)
         right_col.addWidget(self.now_artist)
@@ -1442,18 +2148,19 @@ class MainWindow(QMainWindow):
 
     def _rebuild_albums_grid(self):
         """Group library tracks by (album tag | artist | folder) and show
-        each group's cover + name. Fast path: reuse the tag cache; only fall
-        back to mutagen for tracks the background loader hasn't tagged yet."""
+        each group's cover + name.
 
-        def _first_tag(val):
-            if isinstance(val, (list, tuple)):
-                return str(val[0]) if val else ""
-            return str(val) if val else ""
-
+        LAG FIX: the old version ran mutagen over every untagged track and
+        decoded covers synchronously on the UI thread (≈14 s freeze on a
+        3k-track library). The grouping + cover decoding now runs in a
+        QThread; results stream back and the grid fills incrementally.
+        """
         import coverart as _ca
-        groups = {}   # album_key -> [paths]
+
+        # Fast pass — group by cached tags (no I/O); only truly untagged
+        # tracks need the background worker.
+        groups = {}
         untagged = []
-        # Pass 1 — group by cached tags (no I/O at all)
         for p in self.library:
             title, artist = self._tag_cache.get(p, ("", ""))
             if not title and not artist:
@@ -1463,47 +2170,21 @@ class MainWindow(QMainWindow):
                 key = f"{artist} — Singles" if artist else "Unknown Album"
             groups.setdefault(key, []).append(p)
 
-        # Pass 2 — only for still-untagged tracks read the file once
-        if untagged:
-            try:
-                from mutagen import File as MutagenFile
-            except Exception:
-                MutagenFile = None
-            still_unknown = []
-            for p in untagged:
-                album = ""
-                if MutagenFile is not None:
-                    try:
-                        m = MutagenFile(p, easy=True)
-                        if m is not None and m.tags:
-                            album = _first_tag(m.tags.get("album"))
-                    except Exception:
-                        pass
-                if album:
-                    groups.setdefault(album, []).append(p)
-                else:
-                    still_unknown.append(p)
-            for p in still_unknown:
-                groups.setdefault("Unknown Album", []).append(p)
-
         dpr = get_dpr()
         self.albums_grid.clear()
         from PyQt6.QtGui import QIcon as _QI
+        placeholder = render_icon(Icon.MUSIC_NOTE, 120, self.theme["gold"], dpr)
         for name in sorted(groups.keys(), key=str.lower):
             paths = groups[name]
+            if name == "Unknown Album" and untagged:
+                continue   # this bucket gets filled by the worker instead
             item = QListWidgetItem(f"{name}\n({len(paths)} tracks)")
-            cover_pm = None
-            for p in paths[:4]:
-                data = _ca.get_cover_bytes(p)
-                if data:
-                    from PyQt6.QtCore import QByteArray
-                    pm = QPixmap()
-                    if pm.loadFromData(QByteArray(data)):
-                        cover_pm = pm
-                        break
+            # LAG FIX: covers decode in the background worker for cache-misses;
+            # only reuse an already-cached pixmap here (zero I/O on the UI
+            # thread — the old code decoded up to 4 covers per album here).
+            cover_pm = _ca.get_cached_pixmap(paths[0])
             if cover_pm is None:
-                cover_pm = render_icon(Icon.MUSIC_NOTE, 120,
-                                       self.theme["gold"], dpr)
+                cover_pm = placeholder
             item.setIcon(_QI(cover_pm.scaled(
                 130, 130, Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation)))
@@ -1511,85 +2192,310 @@ class MainWindow(QMainWindow):
             item.setToolTip("\n".join(os.path.basename(x) for x in paths[:8]))
             self.albums_grid.addItem(item)
 
+        if not untagged:
+            return
+
+        # Background pass — resolve album tags + decode one cover per album
+        # off the UI thread; chunks stream into the grid as they complete.
+        # A startup preload may still be running — reuse it instead of
+        # doubling the work; its results land in the same grid.
+        worker = getattr(self, "_albums_worker", None)
+        if worker is not None and worker.isRunning():
+            return
+        self._albums_worker = AlbumsWorkerThread(untagged, self)
+        self._albums_worker.album_group_ready.connect(
+            self._on_album_group_ready)
+        self._albums_worker.finished.connect(
+            lambda: self.loading_overlay.hide_loading())
+        self.loading_overlay.show_loading("Loading albums")
+        self._albums_worker.start()
+
+    def _preload_albums_background(self):
+        """Warm the album groups + cover cache at STARTUP (user request:
+        «آلبوم‌ها در اول برنامه در پس‌زمینه لود بشن و بمونن»). Revisiting
+        the Albums page afterwards is instant — everything comes from cache."""
+        # A worker may already be filling the grid (user clicked Albums early)
+        if getattr(self, "_albums_worker", None) is not None and \
+                self._albums_worker.isRunning():
+            return
+        self._albums_worker = AlbumsWorkerThread(list(self.library), self)
+        self._albums_worker.album_group_ready.connect(
+            self._on_album_group_ready)   # grid updates live if visible
+        self._albums_worker.start()
+
+    def _on_album_group_ready(self, name: str, paths: list, cover_data):
+        """Worker result: one album group — append it to the grid (or warm
+        the caches during a background preload)."""
+        if not self.albums_grid.isVisible():
+            return
+        dpr = get_dpr()
+        item = QListWidgetItem(f"{name}\n({len(paths)} tracks)")
+        if cover_data:
+            pm = coverart.bytes_to_pixmap(cover_data)
+            if pm.isNull():
+                pm = None
+        else:
+            pm = None
+        if pm is None:
+            pm = render_icon(Icon.MUSIC_NOTE, 120, self.theme["gold"], dpr)
+        from PyQt6.QtGui import QIcon as _QI
+        item.setIcon(_QI(pm.scaled(
+            130, 130, Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation)))
+        item.setData(Qt.ItemDataRole.UserRole, paths[0])
+        item.setToolTip("\n".join(os.path.basename(x) for x in paths[:8]))
+        self.albums_grid.addItem(item)
+
     def _on_album_clicked(self, item):
         """Double-click an album: filter the library list to its tracks."""
         first = item.data(Qt.ItemDataRole.UserRole)
         if not first:
             return
-        # Re-derive the album group of this representative track
+        # Re-derive the album group of this representative track — the album
+        # page groups by folder, so every track of the same folder belongs.
         target_dir = os.path.dirname(first)
-        tracks = [p for p in self.library
-                  if path_within(p, target_dir) or True]  # keep order stable
-        self._play_from_list(tracks, max(0, tracks.index(first))
-                             if first in tracks else 0, view=View.LIBRARY)
+        tracks = [p for p in self.library if path_within(p, target_dir)]
+        if first not in tracks:
+            tracks.append(first)
+        self._play_from_list(tracks, tracks.index(first),
+                             view=View.LIBRARY)
 
     # ------------------------------------------------------------------
     # Stats page
     # ------------------------------------------------------------------
     def _build_stats_page(self) -> QWidget:
+        """Listening stats — redesigned: stat cards on top, a "Most Played"
+        list with real album covers, and a compact top-artists strip."""
+        from PyQt6.QtWidgets import QScrollArea
         page = QWidget()
         outer = QVBoxLayout(page)
-        outer.setContentsMargins(8, 0, 8, 0)
-        card = QFrame()
-        card.setObjectName("TrackList")   # reuse the glass panel styling
-        lay = QVBoxLayout(card)
-        lay.setContentsMargins(24, 20, 24, 20)
-        lay.setSpacing(14)
+        outer.setContentsMargins(8, 4, 8, 8)
+        outer.setSpacing(14)
 
-        title = QLabel("Your Listening Stats")
-        title.setObjectName("NowTitle")
-        lay.addWidget(title)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("background: transparent;")
+        body = QWidget()
+        body.setStyleSheet("background: transparent;")
+        lay = QVBoxLayout(body)
+        lay.setContentsMargins(16, 8, 16, 16)
+        lay.setSpacing(16)
 
-        self.stat_total_label = QLabel("—")
-        self.stat_total_label.setObjectName("NowTitle")
-        lay.addWidget(self.stat_total_label)
-        sub = QLabel("total listening time")
-        sub.setStyleSheet(f"color: {self.theme['muted']}; font-size: 12px;")
-        lay.addWidget(sub)
+        # ---- Stat cards row (total / plays / artists / sessions) --------
+        cards_row = QHBoxLayout()
+        cards_row.setSpacing(12)
+        self._stat_cards = {}
+        for key, icon_name in (("total", Icon.TIMER), ("plays", Icon.PLAY),
+                               ("artists", Icon.ALBUMS), ("sessions", Icon.STATS)):
+            card = QFrame()
+            card.setObjectName("TrackList")   # glass panel look
+            card.setFixedHeight(92)
+            cl = QHBoxLayout(card)
+            cl.setContentsMargins(16, 12, 16, 12)
+            cl.setSpacing(12)
+            dpr = get_dpr()
+            ic = QLabel()
+            ic.setPixmap(render_icon(icon_name, 30, self.theme["gold"], dpr))
+            ic.setFixedWidth(34)
+            ic.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            cl.addWidget(ic)
+            col = QVBoxLayout()
+            col.setSpacing(2)
+            val = QLabel("—")
+            val.setObjectName("NowTitle")
+            val.setStyleSheet("font-size: 19px;")
+            val.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            sub = QLabel("")
+            sub.setStyleSheet(f"color: {self.theme['muted']}; font-size: 11px;")
+            col.addWidget(val)
+            col.addWidget(sub)
+            cl.addLayout(col, 1)
+            cards_row.addWidget(card, 1)
+            self._stat_cards[key] = (val, sub, ic)
+        lay.addLayout(cards_row)
 
-        self.stat_top_tracks = QLabel("")
+        # ---- Most played: real rows with per-track play buttons ----------
+        mp_card = QFrame()
+        mp_card.setObjectName("TrackList")
+        mp_lay = QVBoxLayout(mp_card)
+        mp_lay.setContentsMargins(16, 14, 16, 14)
+        mp_lay.setSpacing(8)
+        mp_head = QLabel("Most Played Tracks")
+        mp_head.setObjectName("PageTitle")
+        mp_head.setStyleSheet("font-size: 15px;")
+        mp_lay.addWidget(mp_head)
+        # A vertical list of StatTrackRow widgets — each row: medal, cover,
+        # title/artist, play count, and a ▶ button that plays that track
+        # (double-click on the row plays it too).
+        self._stat_tracks_area = QWidget()
+        self._stat_tracks_area.setStyleSheet("background: transparent;")
+        self._stat_tracks_lay = QVBoxLayout(self._stat_tracks_area)
+        self._stat_tracks_lay.setContentsMargins(0, 0, 0, 0)
+        self._stat_tracks_lay.setSpacing(4)
+        mp_lay.addWidget(self._stat_tracks_area)
+        self.stat_top_tracks = QLabel("")   # empty-state message lives here
         self.stat_top_tracks.setWordWrap(True)
-        lay.addWidget(self.stat_top_tracks)
+        mp_lay.addWidget(self.stat_top_tracks)
+        lay.addWidget(mp_card)
+
+        # ---- Listening activity chart card --------------------------------
+        ch_card = QFrame()
+        ch_card.setObjectName("TrackList")
+        ch_lay = QVBoxLayout(ch_card)
+        ch_lay.setContentsMargins(16, 14, 16, 14)
+        ch_lay.setSpacing(8)
+        ch_head = QLabel("Top Tracks Chart")
+        ch_head.setObjectName("PageTitle")
+        ch_head.setStyleSheet("font-size: 15px;")
+        ch_lay.addWidget(ch_head)
+        self._stats_chart = StatsChartBar(t := self.theme)
+        ch_lay.addWidget(self._stats_chart)
+        lay.addWidget(ch_card)
+
+        # ---- Top artists strip -------------------------------------------
+        ar_card = QFrame()
+        ar_card.setObjectName("TrackList")
+        ar_lay = QVBoxLayout(ar_card)
+        ar_lay.setContentsMargins(16, 14, 16, 14)
+        ar_lay.setSpacing(8)
+        ar_head = QLabel("Top Artists")
+        ar_head.setObjectName("PageTitle")
+        ar_head.setStyleSheet("font-size: 15px;")
+        ar_lay.addWidget(ar_head)
         self.stat_artists_label = QLabel("")
         self.stat_artists_label.setWordWrap(True)
-        lay.addWidget(self.stat_artists_label)
+        ar_lay.addWidget(self.stat_artists_label)
         self.stat_misc = QLabel("")
-        self.stat_misc.setStyleSheet(f"color: {self.theme['muted']}; font-size: 12px;")
-        lay.addWidget(self.stat_misc)
+        self.stat_misc.setStyleSheet(f"color: {self.theme['muted']}; font-size: 11px;")
+        ar_lay.addWidget(self.stat_misc)
+        lay.addWidget(ar_card)
 
+        row = QHBoxLayout()
+        row.addStretch(1)
         refresh_btn = QPushButton("Refresh")
         refresh_btn.setObjectName("GhostBtn")
         refresh_btn.clicked.connect(self._refresh_stats_view)
-        lay.addWidget(refresh_btn)
+        row.addWidget(refresh_btn)
+        lay.addLayout(row)
         lay.addStretch(1)
 
-        outer.addWidget(card)
+        scroll.setWidget(body)
+        outer.addWidget(scroll)
+        self._stats_built = True
         return page
 
     def _refresh_stats_view(self):
-        if not getattr(self, "stats", None):
+        if not getattr(self, "stats", None) or not getattr(self, "_stats_built", False):
             return
         from playstats import PlayStats
-        self.stat_total_label.setText(PlayStats.fmt_total(self.stats.total_seconds))
+        t = self.theme
+        dpr = get_dpr()
+
+        def _set_card(key, value, subtitle):
+            val, sub, ic = self._stat_cards[key]
+            val.setText(value)
+            sub.setText(subtitle)
+            icon_name = {"total": Icon.TIMER, "plays": Icon.PLAY,
+                         "artists": Icon.ALBUMS, "sessions": Icon.STATS}[key]
+            ic.setPixmap(render_icon(icon_name, 30, t["gold"], dpr))
+
+        total = self.stats.total_seconds
+        plays = sum(self.stats.play_counts.values())
+        artists_n = len(self.stats.artist_seconds)
+        _set_card("total", PlayStats.fmt_total(total), "total listening time")
+        _set_card("plays", f"{plays:,}", "tracks played")
+        _set_card("artists", f"{artists_n:,}", "artists heard")
+        _set_card("sessions", f"{self.stats.sessions:,}", "sessions opened")
+
+        # Most played — real interactive rows: cover + play button per track.
+        # Paths ride along from top_tracks() so covers resolve DIRECTLY
+        # (the old title-based lookup missed files with duplicate names).
+        # Rebuilt only when the ranking changed (button mashing on Refresh
+        # used to rebuild identical rows every click).
         tops = self.stats.top_tracks(self._tag_cache, 10)
-        lines = []
-        for i, (t, a, cnt) in enumerate(tops, 1):
-            lines.append(f"  {i}.  {t}" + (f" — {a}" if a else "") +
-                         f"   ·  {cnt}×")
-        self.stat_top_tracks.setText(
-            "<b>Most played tracks</b><br>" + "<br>".join(lines) if lines
-            else "<b>Most played tracks</b><br>Nothing yet — play something!")
+        sig = tuple(tops)
+        if sig == getattr(self, "_stats_rows_sig", None):
+            return
+        self._stats_rows_sig = sig
+        while self._stat_tracks_lay.count():
+            item = self._stat_tracks_lay.takeAt(0)
+            wd = item.widget()
+            if wd is not None:
+                wd.deleteLater()
+        if tops:
+            self.stat_top_tracks.setVisible(False)
+            for i, (title, artist, cnt, path) in enumerate(tops, 1):
+                # Cover: warm cache first (instant); a cold cache reads the
+                # file once — stats refresh is user-triggered and bounded
+                # to 10 rows, so the small synchronous cost is acceptable
+                # (and results land in the shared cover cache).
+                cover_pm = coverart.get_cached_pixmap(path)
+                if cover_pm is None:
+                    data = coverart.get_cover_bytes(path)
+                    if data:
+                        cover_pm = coverart.bytes_to_pixmap(data)
+                row = StatTrackRow(i, path, title, artist, cnt, cover_pm,
+                                   self.theme, self._play_from_stats)
+                self._stat_tracks_lay.addWidget(row)
+            self._stat_tracks_area.setVisible(True)
+            # Animated top-tracks bar chart
+            self._stats_chart.set_theme(self.theme)
+            self._stats_chart.set_data(
+                [(title, cnt) for title, _a, cnt, _p in tops[:7]])
+        else:
+            self._stat_tracks_area.setVisible(False)
+            self.stat_top_tracks.setVisible(True)
+            self.stat_top_tracks.setText(
+                f"<span style='color:{t['muted']};'>Nothing yet — play something!</span>")
+            self._stats_chart.set_data([])
+
         artists = self.stats.top_artists(5)
         if artists:
+            rows = []
+            for rank, (a, dur) in enumerate(artists, 1):
+                bar_pct = max(8, int(100 - rank * 16))
+                rows.append(
+                    f"<table width='100%' cellspacing='0'><tr>"
+                    f"<td width='18' style='color:{t['muted']};'>{rank}</td>"
+                    f"<td style='color:{t['text']};'>{self._esc_html(a)}</td>"
+                    f"<td width='90'>"
+                    f"<table width='{bar_pct}%'><tr><td style='background-color:"
+                    f"{t['gold']};'>&nbsp;</td></tr></table></td>"
+                    f"<td align='right' width='80' style='color:{t['muted']};'>"
+                    f"{dur}</td></tr></table>")
             self.stat_artists_label.setText(
-                "<b>Top artists</b><br>" +
-                "<br>".join(f"  {a}  ·  {dur}" for a, dur in artists))
+                "<div style='line-height:150%;'>" + "".join(rows) + "</div>")
         else:
             self.stat_artists_label.setText("")
         self.stat_misc.setText(
-            f"Sessions opened: {self.stats.sessions}"
-            + (f"   ·   Listening since {self.stats.first_played}"
-               if self.stats.first_played else ""))
+            ("Listening since " + self.stats.first_played)
+            if self.stats.first_played else "")
+
+    @staticmethod
+    def _esc_html(s: str) -> str:
+        return (s.replace("&", "&amp;").replace("<", "&lt;")
+                 .replace(">", "&gt;"))
+
+    def _play_from_stats(self, path: str):
+        """▶ on a stats row: play this track with the library as the queue
+        (proper next/prev context), like clicking it in the library list."""
+        if not path:
+            # Stale stats entry (file removed from library, cache not yet
+            # rebuilt) — silently ignore instead of nagging the user.
+            log.info("stats row has no resolvable track path; ignoring play")
+            return
+        if not os.path.exists(path):
+            QMessageBox.information(self, APP_NAME,
+                "This track is no longer in the library.")
+            return
+        if path not in self.library:
+            self._play_path_from_playlist(path)
+            return
+        self._on_rail_clicked("library")
+        self._play_from_list(list(self.library),
+                             max(0, self.library.index(path)),
+                             view=View.LIBRARY)
 
     def _build_tray(self):
         icon_path = Path(__file__).parent / "assets" / "icon.png"
@@ -1611,20 +2517,85 @@ class MainWindow(QMainWindow):
         self.tray.activated.connect(self._on_tray_activated)
 
     def _setup_shortcuts(self):
-        # Space: play/pause
+        # Space / Enter: play-pause
         QShortcut(QKeySequence(Qt.Key.Key_Space), self, activated=self._on_play_pause)
-        # Left/Right arrows: prev/next
-        QShortcut(QKeySequence("Ctrl+Left"), self, activated=self._on_prev)
-        QShortcut(QKeySequence("Ctrl+Right"), self, activated=self._on_next)
-        # Up/Down: volume
-        QShortcut(QKeySequence("Ctrl+Up"), self, activated=lambda: self._change_volume(5))
-        QShortcut(QKeySequence("Ctrl+Down"), self, activated=lambda: self._change_volume(-5))
-        # Ctrl+F: focus search
+        QShortcut(QKeySequence(Qt.Key.Key_Return), self, activated=self._on_play_pause)
+        QShortcut(QKeySequence(Qt.Key.Key_Enter), self, activated=self._on_play_pause)
+        # Left/Right arrows: previous / next track
+        QShortcut(QKeySequence(Qt.Key.Key_Left), self, activated=self._on_prev)
+        QShortcut(QKeySequence(Qt.Key.Key_Right), self, activated=self._on_next)
+        # Up/Down arrows: volume — but let the focused list consume them for
+        # row navigation first (context Qt.WindowShortcut fires after the
+        # widget's own handling only when the list does not accept the key).
+        up = QShortcut(QKeySequence(Qt.Key.Key_Up), self)
+        up.setContext(Qt.ShortcutContext.WindowShortcut)
+        up.activated.connect(self._on_arrow_up)
+        down = QShortcut(QKeySequence(Qt.Key.Key_Down), self)
+        down.setContext(Qt.ShortcutContext.WindowShortcut)
+        down.activated.connect(self._on_arrow_down)
+        # M: mute toggle
+        QShortcut(QKeySequence(Qt.Key.Key_M), self, activated=self._on_mute_toggle)
+        # F11 / F: fullscreen player
+        QShortcut(QKeySequence(Qt.Key.Key_F11), self, activated=self._toggle_fullscreen_player)
+        QShortcut(QKeySequence(Qt.Key.Key_F), self, activated=self._toggle_fullscreen_player)
+        # Ctrl+F: focus search (plain F is fullscreen, so search keeps Ctrl)
         QShortcut(QKeySequence("Ctrl+F"), self, activated=lambda: self.search_edit.setFocus())
         # Ctrl+M: mini player
         QShortcut(QKeySequence("Ctrl+M"), self, activated=self._toggle_mini_player)
         # Ctrl+J: jump to playing track
         QShortcut(QKeySequence("Ctrl+J"), self, activated=self._jump_to_playing)
+        # Escape: leave the fullscreen player
+        QShortcut(QKeySequence(Qt.Key.Key_Escape), self, activated=self._exit_fullscreen_player)
+
+    # ------------------------------------------------------------------
+    # Fullscreen player (F11 / F to toggle, Esc to exit)
+    # ------------------------------------------------------------------
+    def _toggle_fullscreen_player(self):
+        if getattr(self, "_fullscreen_player", None) is not None and \
+                self._fullscreen_player.isVisible():
+            self._exit_fullscreen_player()
+            return
+        self._fullscreen_player = getattr(self, "_fullscreen_player", None)
+        if self._fullscreen_player is None:
+            from fullscreen_player import FullscreenPlayer
+            self._fullscreen_player = FullscreenPlayer(self)
+        self._fullscreen_player._apply_theme()
+        self._fullscreen_player.refresh_state()
+        self._fullscreen_player.show()
+        self._fullscreen_player.raise_()
+        self._fullscreen_player.activateWindow()
+
+    def _exit_fullscreen_player(self):
+        fs = getattr(self, "_fullscreen_player", None)
+        if fs is not None and fs.isVisible():
+            fs.close()
+
+    def _on_arrow_up(self):
+        """Up arrow: move the list selection when a list owns focus,
+        otherwise raise the volume."""
+        lst = self._focused_track_list()
+        if lst is not None:
+            row = max(0, lst.currentRow() - 1)
+            lst.setCurrentRow(row)
+            return
+        self._change_volume(5)
+
+    def _on_arrow_down(self):
+        """Down arrow: move the list selection when a list owns focus,
+        otherwise lower the volume."""
+        lst = self._focused_track_list()
+        if lst is not None:
+            row = min(lst.count() - 1, lst.currentRow() + 1)
+            lst.setCurrentRow(row)
+            return
+        self._change_volume(-5)
+
+    def _focused_track_list(self):
+        """The track list currently holding keyboard focus, if any."""
+        fw = QApplication.focusWidget()
+        if fw in (self.library_list, self.favorites_list):
+            return fw
+        return None
 
     def _change_volume(self, delta):
         v = self.player_bar.vol_slider.value() + delta
@@ -1716,6 +2687,8 @@ class MainWindow(QMainWindow):
 
     def _apply_theme(self):
         self.theme = Theme.get(self.theme_name)
+        theme_changed = (getattr(self, "_last_theme", None) or {}).get("name") \
+            != self.theme.get("name")
         qss = build_qss(self.theme)
         # Apply at BOTH levels: on the window for its children (as before)
         # and on the application so top-level popups that are not QObject
@@ -1747,19 +2720,35 @@ class MainWindow(QMainWindow):
         if hasattr(self, "folder_tree"):
             self.folder_tree.setStyleSheet(
                 f"QTreeWidget {{ background: {self.theme['panel_bg']}; border: 1px solid {self.theme['border']}; border-radius: 10px; padding: 6px; outline: 0; }}"
-                f" QTreeWidget::item {{ padding: 6px 4px; border-radius: 4px; outline: 0; }}"
+                f" QTreeWidget::item {{ padding: 8px 6px; border-radius: 8px; margin: 1px 2px; outline: 0; background: transparent; }}"
                 f" QTreeWidget::item:hover {{ background: {self.theme['panel_bg_2']}; outline: 0; }}"
-                f" QTreeWidget::item:selected {{ background: {self.theme['active']}; color: {self.theme['gold_light']}; outline: 0; }}"
+                f" QTreeWidget::item:selected {{ background: transparent; color: {self.theme['gold_light']}; outline: 0; border: none; }}"
+                f" QTreeWidget::item:focus {{ background: transparent; outline: 0; border: none; }}"
             )
-            self._rebuild_folder_tree()
+            if theme_changed:
+                self._rebuild_folder_tree()
         # Rebuild tray menu with new theme colors
         if hasattr(self, "tray") and self.tray is not None:
             self._rebuild_tray_menu()
-        if hasattr(self, "library_list"):
+        if hasattr(self, "library_list") and theme_changed:
             self._highlight_playing_in_lists()
-        # Catch every remaining widget whose inline stylesheet was baked with
-        # the previous theme's colors (stats page, hints, custom panels...).
-        self._sweep_inline_theme_styles()
+        if theme_changed:
+            # Catch every remaining widget whose inline stylesheet was baked
+            # with the previous theme's colors. The sweep walks EVERY widget
+            # (~500 on a loaded window) — skip it entirely for same-theme
+            # re-applies (startup called it twice, wasting ~200 ms each).
+            self._sweep_inline_theme_styles()
+            # Stats rows carry per-instance styles the sweep can't guess —
+            # re-theme them explicitly.
+            rows_lay = getattr(self, "_stat_tracks_lay", None)
+            if rows_lay is not None:
+                for i in range(rows_lay.count()):
+                    row = rows_lay.itemAt(i).widget()
+                    if isinstance(row, StatTrackRow):
+                        row.set_theme(self.theme)
+            chart = getattr(self, "_stats_chart", None)
+            if chart is not None:
+                chart.set_theme(self.theme)
         # Snapshot for the next sweep.
         self._last_theme = dict(self.theme)
 
@@ -1841,12 +2830,9 @@ class MainWindow(QMainWindow):
             self.page_title.setText("Albums")
             self.rail.btn_albums.setChecked(True)
             self.stack.setCurrentIndex(2)
-            self.loading_overlay.show_loading("Loading albums")
-            try:
-                QApplication.processEvents()
-                self._rebuild_albums_grid()
-            finally:
-                self.loading_overlay.hide_loading()
+            # Grid builds from the tag cache instantly; untagged tracks are
+            # grouped by the background worker (spinner until done).
+            self._rebuild_albums_grid()
         elif key == "stats":
             self.stack.setCurrentIndex(3)
             self.page_title.setText("Listening Stats")
@@ -1930,11 +2916,14 @@ class MainWindow(QMainWindow):
     def _update_count_label(self):
         if self.current_view == View.LIBRARY:
             n = len(self._get_filtered_sorted_library())
-            total = len(self.library)
+            ff = getattr(self, "_folder_filter", None)
+            total = len(self._folder_tracks(ff)) if ff else len(self.library)
             if n != total:
-                self.count_label.setText(f"{n} of {total} tracks")
+                suffix = " in folder" if ff else ""
+                self.count_label.setText(f"{n} of {total} track{'' if total == 1 else 's'}{suffix}")
             else:
-                self.count_label.setText(f"{n} track{'s' if n != 1 else ''}")
+                suffix = " in folder" if ff else ""
+                self.count_label.setText(f"{n} track{'' if n != 1 else 's'}{suffix}")
         else:
             n = len(self._get_filtered_sorted_favorites())
             total = len(self.favorites)
@@ -1944,7 +2933,18 @@ class MainWindow(QMainWindow):
                 self.count_label.setText(f"{n} favorite{'s' if n != 1 else ''}")
 
     def _on_search_changed(self, text):
+        # Debounced: rebuilding a 3k-track list on every keystroke stuttered
+        # typing; 180 ms after the last keypress is instant-feeling but
+        # coalesces bursts of keys.
         self.search_filter = text.lower().strip()
+        if self._search_debounce is None:
+            self._search_debounce = QTimer(self)
+            self._search_debounce.setSingleShot(True)
+            self._search_debounce.setInterval(180)
+            self._search_debounce.timeout.connect(self._apply_search_filter)
+        self._search_debounce.start()
+
+    def _apply_search_filter(self):
         self._rebuild_library_list()
         self._rebuild_favorites_list()
         self._update_count_label()
@@ -1957,6 +2957,11 @@ class MainWindow(QMainWindow):
 
     def _get_filtered_sorted_library(self):
         tracks = list(self.library)
+        # Folder filter (from the folder tree) narrows the pool first; it is
+        # kept as state so a search/sort change no longer drops it.
+        if getattr(self, "_folder_filter", None):
+            ff = self._folder_filter
+            tracks = [p for p in tracks if path_within(p, ff)]
         # Filter using cache (fast, no I/O)
         if self.search_filter:
             filtered = []
@@ -1978,8 +2983,32 @@ class MainWindow(QMainWindow):
         elif self.sort_mode == SortMode.FILENAME:
             tracks.sort(key=lambda x: os.path.basename(x).lower())
         elif self.sort_mode == SortMode.DATE_ADDED:
-            tracks.sort(key=lambda x: os.path.getmtime(x) if os.path.exists(x) else 0, reverse=True)
+            # getmtime is a syscall per file — cache it per library snapshot
+            # instead of hitting the disk on every search keystroke.
+            tracks.sort(key=lambda x: self._mtime_cache(x), reverse=True)
         return tracks
+
+    def _mtime_cache(self, path: str) -> float:
+        cache = getattr(self, "_mtime_map", None)
+        if cache is None or path not in cache:
+            if cache is None:
+                cache = self._mtime_map = {}
+                self._mtime_lib_len = 0
+            # Rebuild wholesale when the library changes (cheap: one walk)
+            if getattr(self, "_mtime_lib_len", 0) != len(self.library):
+                cache.clear()
+                for p in self.library:
+                    try:
+                        cache[p] = os.path.getmtime(p)
+                    except OSError:
+                        cache[p] = 0.0
+                self._mtime_lib_len = len(self.library)
+            else:
+                try:
+                    cache[path] = os.path.getmtime(path)
+                except OSError:
+                    cache[path] = 0.0
+        return cache.get(path, 0.0)
 
     def _get_filtered_sorted_favorites(self):
         tracks = list(self.favorites)
@@ -2002,7 +3031,7 @@ class MainWindow(QMainWindow):
         elif self.sort_mode == SortMode.FILENAME:
             tracks.sort(key=lambda x: os.path.basename(x).lower())
         elif self.sort_mode == SortMode.DATE_ADDED:
-            tracks.sort(key=lambda x: os.path.getmtime(x) if os.path.exists(x) else 0, reverse=True)
+            tracks.sort(key=lambda x: self._mtime_cache(x), reverse=True)
         return tracks
 
     @staticmethod
@@ -2097,9 +3126,19 @@ class MainWindow(QMainWindow):
         self.scan_status_label.setVisible(False)
         self.rail.btn_add.setEnabled(True)
         self.rail.btn_refresh.setEnabled(True)
-        self._rebuild_library_list()
+        self._rebuild_library_list(rebuild_tree=True)
         self._rebuild_favorites_list()
         self._update_count_label()
+        try:
+            from playstats import set_search_roots
+            if getattr(self, "stats", None) is not None:
+                _roots = list(self.added_folders or [])
+                _roots += list({os.path.dirname(os.path.abspath(p))
+                                for p in self.library if p})
+                set_search_roots(_roots)
+                self.stats.prune_missing(set(self.library))
+        except Exception:
+            pass
         self._save_config()
         if added > 0 or removed > 0:
             msg = []
@@ -2115,9 +3154,14 @@ class MainWindow(QMainWindow):
             self._scan_results_pending = None
             self._start_scan(nxt)
 
-    def _rebuild_library_list(self):
+    def _rebuild_library_list(self, rebuild_tree: bool = False):
         """Rebuild the library list FAST — just filenames, no tag reading.
         Tags are loaded in background by _start_tag_loader.
+
+        `rebuild_tree`: the folder tree mirrors added_folders, not the
+        library list — rebuilding it here (a recursive walk of the whole
+        music collection) on every search keystroke was a major lag source.
+        Callers that actually change folders pass True.
         """
         self.library_list.clear()
         tracks = self._get_filtered_sorted_library()
@@ -2134,13 +3178,17 @@ class MainWindow(QMainWindow):
             item.setToolTip(f"{title}\n{artist}\n{path}" if artist else path)
             self.library_list.addItem(item)
         self._highlight_playing_in_lists()
+        # Reflect the active folder filter in the count label (search count
+        # stays as-is; a folder filter deserves the same clarity).
         self._update_count_label()
-        self._rebuild_folder_tree()
+        if rebuild_tree:
+            self._rebuild_folder_tree()
         # Start background tag loading
         self._start_tag_loader(tracks)
 
     _tag_loader = None
     _tag_cache = {}
+    _tag_loader_generation = 0   # bumped per loader; stale results are dropped
 
     def _start_tag_loader(self, tracks: list):
         """Load title/artist tags in background thread."""
@@ -2156,12 +3204,19 @@ class MainWindow(QMainWindow):
             self._update_list_items_with_tags()
             return
 
+        self._tag_loader_generation += 1
         self._tag_loader = TagLoaderThread(uncached, self)
+        self._tag_loader.generation = self._tag_loader_generation
         self._tag_loader.tag_loaded.connect(self._on_tag_loaded)
         self._tag_loader.start()
 
     def _on_tag_loaded(self, path: str, title: str, artist: str):
         """Called when a tag is loaded in background."""
+        # Drop results from a cancelled loader: a slow mutagen read on an old
+        # thread must never overwrite a fresher value written after an edit.
+        loader = self._tag_loader
+        if loader is not None and getattr(loader, "generation", None) != self._tag_loader_generation:
+            return
         self._tag_cache[path] = (title, artist)
         # Update the corresponding item in the list
         for lst in (self.library_list, self.favorites_list):
@@ -2204,7 +3259,13 @@ class MainWindow(QMainWindow):
         return bool(self._tag_cache)
 
     def _rebuild_folder_tree(self):
-        """Build a tree of added folders and their subfolders."""
+        """Build a tree of added folders and their subfolders.
+
+        LAG FIX: subfolders load LAZILY — each branch gets a single
+        placeholder child and real children are built on first expand
+        (itemExpanded). Walking 1400+ directories and creating 1400+
+        QTreeWidgetItems at once froze every search keystroke and scan.
+        """
         if not hasattr(self, 'folder_tree'):
             return
         self.folder_tree.clear()
@@ -2227,8 +3288,7 @@ class MainWindow(QMainWindow):
         add_item.setForeground(0, QColor(self.theme["gold_light"]))
         self.folder_tree.addTopLevelItem(add_item)
 
-        # User-added folders with ALL nested subfolders (recursive, no cap —
-        # the scanner already walks recursively so the tree must match it).
+        # User-added folders — children attach lazily on expand.
         for folder_path in self.added_folders:
             if not os.path.isdir(folder_path):
                 continue
@@ -2237,31 +3297,29 @@ class MainWindow(QMainWindow):
             root_item.setIcon(0, folder_icon)
             root_item.setData(0, Qt.ItemDataRole.UserRole, folder_path)
             root_item.setToolTip(0, folder_path)
+            if _dir_has_subdirs(folder_path):
+                root_item.addChild(QTreeWidgetItem(["…"]))   # lazy marker
             self.folder_tree.addTopLevelItem(root_item)
-            self._add_subtree(root_item, folder_path, folder_icon)
+        # first-level folders stay collapsed (expandAll would force the
+        # full lazy build — exactly what we avoid)
 
-        # Expand all
-        self.folder_tree.expandAll()
-
-    def _add_subtree(self, parent_item, dir_path, folder_icon, depth=0):
-        """Recursively attach every subdirectory of dir_path (max depth 12 as
-        a cycle/loop guard for pathological filesystems)."""
-        if depth > 12:
-            return
-        try:
-            subdirs = sorted([d for d in os.listdir(dir_path)
-                              if os.path.isdir(os.path.join(dir_path, d))
-                              and not d.startswith(".")])
-        except OSError:
-            return
-        for sub in subdirs:
+    def _on_folder_tree_expanded(self, item):
+        """Replace the lazy marker with the branch's real subfolders."""
+        if item.childCount() != 1 or item.child(0).text(0) != "…":
+            return   # already materialized (or childless)
+        item.takeChildren()
+        dpr = get_dpr()
+        folder_icon = QIcon(render_icon(Icon.FOLDER, 18, self.theme["gold"], dpr))
+        dir_path = item.data(0, Qt.ItemDataRole.UserRole)
+        for sub in _list_subdirs(dir_path):
             sub_path = os.path.join(dir_path, sub)
             sub_item = QTreeWidgetItem([sub])
             sub_item.setIcon(0, folder_icon)
             sub_item.setData(0, Qt.ItemDataRole.UserRole, sub_path)
             sub_item.setToolTip(0, sub_path)
-            parent_item.addChild(sub_item)
-            self._add_subtree(sub_item, sub_path, folder_icon, depth + 1)
+            if _dir_has_subdirs(sub_path):
+                sub_item.addChild(QTreeWidgetItem(["…"]))   # next lazy level
+            item.addChild(sub_item)
 
     def _bold_font(self):
         f = self.font()
@@ -2275,36 +3333,320 @@ class MainWindow(QMainWindow):
             self._on_add_folder()
             return
         if data == "__all__":
+            self._folder_filter = None
+            self._mark_selected_folder(None)
             self.search_filter = ""
             self.search_edit.setText("")
             self._rebuild_library_list()
             return
         # Filter tracks to those in this folder (path-boundary safe —
-        # plain startswith would match sibling folders sharing a name prefix)
+        # plain startswith would match sibling folders sharing a name prefix).
+        # The filter is remembered so a later search/sort change keeps it
+        # (it used to silently vanish on the first keystroke in the search box).
         folder = data
+        self._folder_filter = folder
+        self._mark_selected_folder(item)
         self.search_filter = ""
         self.search_edit.setText("")
-        self.loading_overlay.show_loading("Loading folder")
+        self._rebuild_library_list()
+
+    def _mark_selected_folder(self, selected_item):
+        """Visual selection without any rectangle: the picked folder swaps
+        its closed-folder icon for an OPEN folder drawn in the theme accent
+        (gold) and its label turns gold — Explorer-style, symmetric, and
+        obvious at a glance."""
+        dpr = get_dpr()
+        t = self.theme
+        closed = QIcon(render_icon(Icon.FOLDER, 18, t["gold"], dpr))
+        opened = QIcon(render_icon(Icon.FOLDER_OPEN, 18, t["gold_light"], dpr))
+        tree = self.folder_tree
+        for i in range(tree.topLevelItemCount()):
+            self._walk_folder_rows(tree.topLevelItem(i), selected_item,
+                                   closed, opened)
+
+    def _walk_folder_rows(self, item, selected_item, closed, opened):
+        if item.data(0, Qt.ItemDataRole.UserRole) not in ("__all__", "__add__"):
+            is_sel = (item is selected_item)
+            item.setIcon(0, opened if is_sel else closed)
+            item.setForeground(0, QColor(self.theme["gold_light"] if is_sel
+                                         else self.theme["text"]))
+        for i in range(item.childCount()):
+            self._walk_folder_rows(item.child(i), selected_item,
+                                   closed, opened)
+
+    def _on_folder_tree_context_menu(self, pos):
+        """Right-click menu on a folder tree entry: folder-wide actions."""
+        item = self.folder_tree.itemAt(pos)
+        if item is None:
+            return
+        data = item.data(0, Qt.ItemDataRole.UserRole)
+        if data in ("__add__", "__all__", None):
+            return
+        folder = data
+        menu = QMenu(self)
+        dpr = get_dpr()
+        t = self.theme
+        act_play = QAction("Play Folder", self)
+        act_play.setIcon(QIcon(render_icon(Icon.PLAY, 16, t["gold"], dpr)))
+        menu.addAction(act_play)
+        act_shuffle = QAction("Shuffle Folder", self)
+        act_shuffle.setIcon(QIcon(render_icon(Icon.SHUFFLE, 16, t["gold"], dpr)))
+        menu.addAction(act_shuffle)
+        menu.addSeparator()
+        act_queue = QAction("Add Folder to Queue", self)
+        act_queue.setIcon(QIcon(render_icon(Icon.LIST_LINES, 16, t["gold"], dpr)))
+        menu.addAction(act_queue)
+        act_pl = QAction("Add Folder to Playlist...", self)
+        act_pl.setIcon(QIcon(render_icon(Icon.PLAYLISTS, 16, t["gold"], dpr)))
+        menu.addAction(act_pl)
+        menu.addSeparator()
+        act_explore = QAction("Open in Explorer", self)
+        act_explore.setIcon(QIcon(render_icon(Icon.FOLDER, 16, t["gold"], dpr)))
+        menu.addAction(act_explore)
+        act_rescan = QAction("Rescan Folder", self)
+        act_rescan.setIcon(QIcon(render_icon(Icon.REFRESH, 16, t["gold"], dpr)))
+        menu.addAction(act_rescan)
+        menu.addSeparator()
+        act_remove = QAction("Remove Folder from Library", self)
+        act_remove.setIcon(QIcon(render_icon(Icon.TRASH, 16, "#e05050", dpr)))
+        menu.addAction(act_remove)
+        act_delete = QAction("Delete Folder from Disk...", self)
+        act_delete.setIcon(QIcon(render_icon(Icon.TRASH, 16, "#e05050", dpr)))
+        menu.addAction(act_delete)
+        chosen = menu.exec(self.folder_tree.mapToGlobal(pos))
+        if chosen is None:
+            return
+        if chosen == act_play:
+            self._play_folder(folder, shuffle=False)
+        elif chosen == act_shuffle:
+            self._play_folder(folder, shuffle=True)
+        elif chosen == act_queue:
+            self._queue_folder(folder)
+        elif chosen == act_pl:
+            self._folder_to_playlist(folder)
+        elif chosen == act_explore:
+            self._open_file_location(folder if os.path.isdir(folder)
+                                     else os.path.dirname(folder))
+        elif chosen == act_rescan:
+            if os.path.isdir(folder):
+                self._start_scan([folder], label="Rescanning folder...")
+        elif chosen == act_remove:
+            self._remove_folder_from_library(folder)
+        elif chosen == act_delete:
+            self._delete_folder_from_disk(folder)
+
+    # ------------------------------------------------------------------
+    # Folder-wide actions (folder tree right-click menu)
+    # ------------------------------------------------------------------
+    def _folder_tracks(self, folder: str) -> list:
+        """All library tracks under `folder` (path-boundary safe)."""
+        return [p for p in self.library if path_within(p, folder)]
+
+    def _play_folder(self, folder: str, shuffle: bool):
+        """Play / shuffle-play only the tracks inside `folder`."""
+        if folder == "__all__":
+            tracks = list(self.library)
+        else:
+            tracks = self._folder_tracks(folder)
+        if not tracks:
+            QMessageBox.information(self, APP_NAME,
+                "This folder has no audio tracks in the library.")
+            return
+        if shuffle:
+            random.shuffle(tracks)
+        self._on_rail_clicked("library")
+        self._play_from_list(tracks, 0, view=View.LIBRARY, shuffled=shuffle)
+        name = os.path.basename(folder) or folder
+        self.page_title.setText(f"{'Shuffle: ' if shuffle else ''}{name}")
+
+    def _queue_folder(self, folder: str):
+        """Append every folder track to the end of the current playlist."""
+        tracks = self._folder_tracks(folder)
+        if not tracks:
+            QMessageBox.information(self, APP_NAME,
+                "This folder has no audio tracks in the library.")
+            return
+        if not self.current_playlist:
+            self._play_from_list(tracks, 0, view=self.current_view)
+            return
+        existing = set(self.current_playlist)
+        added = [p for p in tracks if p not in existing]
+        self.current_playlist.extend(added)
+        self.shuffle_unplayed.update(added)
+        if self.tray and self.tray.isVisible():
+            self.tray.showMessage(APP_NAME,
+                f"Queued {len(added)} track(s) from {os.path.basename(folder)}",
+                QSystemTrayIcon.MessageIcon.Information, 2000)
+
+    def _folder_to_playlist(self, folder: str):
+        """Create/extend a personal playlist with every track of the folder."""
+        from playlist_dialog import PlaylistStore
+        tracks = self._folder_tracks(folder)
+        if not tracks:
+            QMessageBox.information(self, APP_NAME,
+                "This folder has no audio tracks in the library.")
+            return
+        default = os.path.basename(folder) or "New Playlist"
+        name, ok = QInputDialog.getText(self, APP_NAME,
+            "Playlist name:", text=PlaylistStore.sanitize_name(default))
+        if not ok:
+            return
+        clean = PlaylistStore.valid_new_name(name, self.playlists)
+        if not clean:
+            existing = PlaylistStore.sanitize_name(name)
+            if existing and existing.casefold() in \
+                    {k.casefold() for k in self.playlists}:
+                # Extend the existing playlist with the folder tracks
+                pl = self.playlists[existing]
+                added = [p for p in tracks if p not in pl]
+                pl.extend(added)
+                self._save_config()
+                QMessageBox.information(self, APP_NAME,
+                    f"Added {len(added)} track(s) to '{existing}'.")
+            return
+        self.playlists[clean] = list(tracks)
+        self._save_config()
+        QMessageBox.information(self, APP_NAME,
+            f"Created '{clean}' with {len(tracks)} track(s).")
+
+    def _remove_folder_from_library(self, folder: str):
+        """Remove a folder and its tracks from the library (files untouched)."""
+        name = os.path.basename(folder) or folder
+        tracks = self._folder_tracks(folder)
+        reply = QMessageBox.question(
+            self, APP_NAME,
+            f"Remove '{name}' from the library?\n\n"
+            f"{len(tracks)} track(s) will leave the library. "
+            f"The files on disk are NOT deleted.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self.added_folders = [f for f in self.added_folders
+                              if os.path.normcase(os.path.abspath(f)) !=
+                              os.path.normcase(os.path.abspath(folder))]
+        for p in tracks:
+            self.library.remove(p) if p in self.library else None
+            self.favorites.discard(p)
+            try:
+                self.play_history.remove(p)
+            except ValueError:
+                pass
+            try:
+                self.redo_stack.remove(p)
+            except ValueError:
+                pass
+            for name_pl in list(self.playlists):
+                if p in self.playlists[name_pl]:
+                    self.playlists[name_pl].remove(p)
+        if self.current_track in tracks:
+            self.audio.stop()
+            self.current_track = None
+            self.player_bar.update_play_button(False)
+            self.player_bar.title_label.setMarqueeText("No track selected")
+            self.player_bar.artist_label.setMarqueeText("—")
+            self.now_title.setMarqueeText("No track selected")
+            self.now_artist.setMarqueeText("Select a track to play")
+        self.current_playlist = [p for p in self.current_playlist
+                                 if p not in set(tracks)]
+        self.current_index = 0 if self.current_playlist else -1
+        if self._folder_filter and (path_within(self._folder_filter, folder)
+                                    or self._folder_filter == folder):
+            self._folder_filter = None
+        self._rebuild_library_list()
+        self._rebuild_favorites_list()
+        self._rebuild_folder_tree()
+        self._update_count_label()
+        self._save_config()
+        if self.tray and self.tray.isVisible():
+            self.tray.showMessage(APP_NAME, f"Removed '{name}' from library",
+                QSystemTrayIcon.MessageIcon.Information, 2000)
+
+    def _delete_folder_from_disk(self, folder: str):
+        """Permanently delete a folder's audio files from disk (2-step confirm).
+        The folder is removed from the library first, then the files."""
+        name = os.path.basename(folder) or folder
+        tracks = self._folder_tracks(folder)
+        reply = QMessageBox.warning(
+            self, APP_NAME,
+            f"PERMANENTLY DELETE '{name}' from your computer?\n\n"
+            f"{len(tracks)} audio file(s) will be deleted.\n"
+            f"This does NOT go to the Recycle Bin and cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        reply2 = QMessageBox.warning(
+            self, APP_NAME,
+            f"Are you REALLY sure about deleting {len(tracks)} file(s)\n"
+            f"inside:\n{folder}\n\nLast chance — this cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if reply2 != QMessageBox.StandardButton.Yes:
+            return
+        # Stop playback first if a doomed track is playing
+        if self.current_track in tracks:
+            self.audio.stop()
+            self.current_track = None
+            self.player_bar.update_play_button(False)
+            self.player_bar.title_label.setMarqueeText("No track selected")
+            self.player_bar.artist_label.setMarqueeText("—")
+        self._remove_folder_from_library_quiet(folder)
+        deleted = 0
+        errors = []
+        for p in tracks:
+            try:
+                if os.path.exists(p):
+                    os.remove(p)
+                    deleted += 1
+            except OSError as ex:
+                errors.append(f"{os.path.basename(p)}: {ex}")
+        # Try to prune now-empty subdirectories up to the folder root itself
+        self._prune_empty_dirs(folder)
+        log.info(f"Folder delete: {deleted} file(s) removed from {folder}")
+        if errors:
+            QMessageBox.warning(self, APP_NAME,
+                f"Deleted {deleted} file(s); some could not be deleted:\n\n" +
+                "\n".join(errors[:8]))
+        elif self.tray and self.tray.isVisible():
+            self.tray.showMessage(APP_NAME,
+                f"Deleted '{name}' ({deleted} files) from disk",
+                QSystemTrayIcon.MessageIcon.Information, 2500)
+
+    def _remove_folder_from_library_quiet(self, folder: str):
+        """Library bookkeeping for _delete_folder_from_disk (no prompts)."""
+        tracks = set(self._folder_tracks(folder))
+        self.added_folders = [f for f in self.added_folders
+                              if os.path.normcase(os.path.abspath(f)) !=
+                              os.path.normcase(os.path.abspath(folder))]
+        self.library = [p for p in self.library if p not in tracks]
+        self.favorites -= tracks
+        self.play_history = [p for p in self.play_history if p not in tracks]
+        self.redo_stack = [p for p in self.redo_stack if p not in tracks]
+        self.current_playlist = [p for p in self.current_playlist
+                                 if p not in tracks]
+        self.current_index = 0 if self.current_playlist else -1
+        for name_pl in list(self.playlists):
+            self.playlists[name_pl] = [p for p in self.playlists[name_pl]
+                                       if p not in tracks]
+        if self._folder_filter and self._folder_filter in tracks:
+            self._folder_filter = None
+        self._rebuild_library_list()
+        self._rebuild_favorites_list()
+        self._rebuild_folder_tree()
+        self._update_count_label()
+        self._save_config()
+
+    @staticmethod
+    def _prune_empty_dirs(folder: str):
+        """Delete the folder and its now-empty ancestors' empty children."""
         try:
-            QApplication.processEvents()
-            filtered = [p for p in self.library if path_within(p, folder)]
-            self.library_list.clear()
-            for i, path in enumerate(filtered):
-                if path in self._tag_cache:
-                    title, artist = self._tag_cache[path]
-                    item = QListWidgetItem(_track_item_text(title, artist))
-                    item.setToolTip(f"{title}\n{artist}\n{path}")
-                else:
-                    fname = os.path.splitext(os.path.basename(path))[0]
-                    item = QListWidgetItem(_track_item_text(fname, ""))
-                    item.setToolTip(path)
-                item.setData(TrackRowDelegate.TITLE_ROLE, i + 1)
-                item.setData(Qt.ItemDataRole.UserRole, path)
-                self.library_list.addItem(item)
-        finally:
-            self.loading_overlay.hide_loading()
-        self._highlight_playing_in_lists()
-        self.count_label.setText(f"{len(filtered)} track{'s' if len(filtered) != 1 else ''} in folder")
+            for root, dirs, files in os.walk(folder, topdown=False):
+                if not dirs and not files:
+                    os.rmdir(root)
+            if os.path.isdir(folder) and not os.listdir(folder):
+                os.rmdir(folder)
+        except OSError:
+            pass  # non-empty or locked — leave it alone
 
     def _rebuild_favorites_list(self):
         """Rebuild favorites list — two-line rows via TrackRowDelegate."""
@@ -2430,18 +3772,48 @@ class MainWindow(QMainWindow):
     # Track menu (three-line button) for the CURRENTLY PLAYING track
     # ------------------------------------------------------------------
     def _show_more_menu(self):
-        """⋯ overflow menu on the player bar: A-B Repeat, Playback Speed,
-        Show in Folder and Track Options."""
+        """⋯ overflow menu on the player bar: Audio Output, A-B Repeat,
+        Playback Speed, Show in Folder and Track Options."""
         menu = QMenu(self)
         dpr = get_dpr()
         t = self.theme
+        # ---- Audio output submenu (System Default / HDMI / S/PDIF / ...) --
+        out_menu = QMenu("Audio Output", menu)
+        out_menu.setIcon(QIcon(render_icon(Icon.VOLUME_HIGH, 16, t["gold"], dpr)))
+        current_id = str(getattr(self, "audio_output_id", "") or "")
+        grp_devices = []
+        act_def = QAction("System Default", out_menu)
+        act_def.setCheckable(True)
+        act_def.setChecked(current_id == "")
+        act_def.triggered.connect(lambda: self._switch_audio_output(""))
+        out_menu.addAction(act_def)
+        out_menu.addSeparator()
+        try:
+            from audio_output import list_output_devices
+            for name, dev_id in list_output_devices():
+                act = QAction(name, out_menu)
+                act.setCheckable(True)
+                act.setChecked(dev_id == current_id)
+                act.triggered.connect(
+                    lambda _=False, did=dev_id: self._switch_audio_output(did))
+                out_menu.addAction(act)
+                grp_devices.append(act)
+        except Exception as e:
+            log.warning(f"output enumeration failed: {e}")
+        if not grp_devices:
+            act_none = QAction("No other devices found", out_menu)
+            act_none.setEnabled(False)
+            out_menu.addAction(act_none)
+        menu.addMenu(out_menu)
+        menu.addSeparator()
         act_ab = QAction("A-B Repeat", self)
         act_ab.setIcon(QIcon(render_icon(Icon.REPEAT_ONE, 16, t["gold"], dpr)))
         act_ab.triggered.connect(self._on_ab_button)
         menu.addAction(act_ab)
         act_rate = QAction("Playback Speed...", self)
         act_rate.setIcon(QIcon(render_icon(Icon.SPEED, 16, t["gold"], dpr)))
-        act_rate.triggered.connect(self._cycle_playback_rate)
+        act_rate.triggered.connect(
+            lambda: self._cycle_playback_rate(self.player_bar.more_btn))
         menu.addAction(act_rate)
         act_loc = QAction("Show in Folder", self)
         act_loc.setIcon(QIcon(render_icon(Icon.FOLDER, 16, t["gold"], dpr)))
@@ -2453,6 +3825,29 @@ class MainWindow(QMainWindow):
         menu.addAction(act_opts)
         btn = self.player_bar.more_btn
         menu.exec(btn.mapToGlobal(QPoint(btn.width() // 2 - 60, -menu.sizeHint().height() - 8)))
+
+    def _switch_audio_output(self, device_id: str):
+        """Route playback to a named output device (menu pick) and persist."""
+        try:
+            from audio_output import apply_output_device
+            ok = apply_output_device(self.audio, device_id)
+            self.audio_output_id = device_id if ok else ""
+            if ok and self.tray and self.tray.isVisible():
+                label = device_id or "System Default"
+                if device_id:
+                    try:
+                        from audio_output import list_output_devices
+                        for name, did in list_output_devices():
+                            if did == device_id:
+                                label = name
+                                break
+                    except Exception:
+                        pass
+                self.tray.showMessage(APP_NAME, f"Audio output: {label}",
+                    QSystemTrayIcon.MessageIcon.Information, 1500)
+        except Exception as e:
+            log.warning(f"audio output switch failed: {e}")
+        self._save_config_debounced()
 
     def _share_current_track(self):
         """Reveal the playing track in Explorer (file pre-selected)."""
@@ -2513,8 +3908,8 @@ class MainWindow(QMainWindow):
                 self.audio.stop()
                 self.current_track = None
                 self.player_bar.update_play_button(False)
-                self.player_bar.title_label.setText("No track selected")
-                self.player_bar.artist_label.setText("—")
+                self.player_bar.title_label.setMarqueeText("No track selected")
+                self.player_bar.artist_label.setMarqueeText("—")
                 if getattr(self, "tray_menu_widget", None) is not None:
                     self.tray_menu_widget.update_now_playing()
             # Library bookkeeping (also purges history entries)
@@ -2552,10 +3947,10 @@ class MainWindow(QMainWindow):
                 self._start_tag_loader([path])
                 if path == self.current_track:
                     title, artist = extract_title_artist(path)
-                    self.now_title.setText(title)
-                    self.now_artist.setText(artist)
-                    self.player_bar.title_label.setText(title)
-                    self.player_bar.artist_label.setText(artist)
+                    self.now_title.setMarqueeText(title)
+                    self.now_artist.setMarqueeText(artist)
+                    self.player_bar.title_label.setMarqueeText(title)
+                    self.player_bar.artist_label.setMarqueeText(artist)
                 self._load_cover_async(path)
                 self._rebuild_library_list()
         except Exception as e:
@@ -2590,6 +3985,12 @@ class MainWindow(QMainWindow):
         panel = getattr(self, "_lyrics_panel", None)
         if panel is not None and panel.isVisible() and self.current_track:
             panel.sync_position(pos_ms)
+        fs = getattr(self, "_fullscreen_player", None)
+        if fs is not None and fs.isVisible() and self.current_track:
+            try:
+                fs.sync_lyrics(pos_ms)
+            except Exception:
+                pass
 
     def _play_track_from_list(self, path):
         lst = self.library_list if self.current_view == View.LIBRARY else self.favorites_list
@@ -2652,10 +4053,10 @@ class MainWindow(QMainWindow):
                     self.current_index = -1
             else:
                 self.current_index = -1
-            self.player_bar.title_label.setText("No track selected")
-            self.player_bar.artist_label.setText("—")
-            self.now_title.setText("No track selected")
-            self.now_artist.setText("Select a track to play")
+            self.player_bar.title_label.setMarqueeText("No track selected")
+            self.player_bar.artist_label.setMarqueeText("—")
+            self.now_title.setMarqueeText("No track selected")
+            self.now_artist.setMarqueeText("Select a track to play")
             if getattr(self, "tray_menu_widget", None) is not None:
                 self.tray_menu_widget.update_now_playing()
         self._rebuild_library_list()
@@ -2737,6 +4138,9 @@ class MainWindow(QMainWindow):
         self.shuffle_unplayed.discard(path)   # smart shuffle: this one had its turn
         if getattr(self, "fx", None):
             self.fx.clear_ab()                # A-B loop is per-track
+        # Listen metering restarts per track (70% credit rule — see stats)
+        self._finalize_listen_credit()
+        self._listened_ms = 0
         self.current_track = path
         # Use cached tags if available, otherwise extract (just for current track)
         if path in self._tag_cache:
@@ -2749,10 +4153,10 @@ class MainWindow(QMainWindow):
                 title = os.path.splitext(os.path.basename(path))[0]
                 artist = "Unknown Artist"
                 self._tag_cache[path] = (title, artist)
-        self.now_title.setText(title)
-        self.now_artist.setText(artist)
-        self.player_bar.title_label.setText(title)
-        self.player_bar.artist_label.setText(artist)
+        self.now_title.setMarqueeText(title)
+        self.now_artist.setMarqueeText(artist)
+        self.player_bar.title_label.setMarqueeText(title)
+        self.player_bar.artist_label.setMarqueeText(artist)
         self.player_bar.time_total.setText("0:00")
         self.player_bar.time_current.setText("0:00")
         self.player_bar.seek_slider.setValue(0)
@@ -2778,13 +4182,24 @@ class MainWindow(QMainWindow):
 
     def _on_track_finished(self):
         """Called when a track finishes naturally."""
-        # Credit the finished listen to play statistics
-        if getattr(self, "stats", None) and self.current_track:
-            title, artist = self._tag_cache.get(self.current_track, ("", ""))
-            dur = self.audio.duration() / 1000.0
-            self.stats.credit_track(self.current_track, dur, artist or "")
-            self._flush_stats()
+        self._finalize_listen_credit()
         self._on_next()
+
+    def _finalize_listen_credit(self):
+        """Apply the 70% rule for the track that just ended (natural finish
+        or manual skip): credit ONE play when >70% was actually heard."""
+        if not getattr(self, "stats", None) or not self.current_track:
+            return
+        dur_ms = self.audio.duration()
+        listened = float(getattr(self, "_listened_ms", 0)) / 1000.0
+        title, artist = self._tag_cache.get(self.current_track, ("", ""))
+        self.stats.credit_track(
+            self.current_track,
+            listened,
+            artist or "",
+            duration_seconds=dur_ms / 1000.0 if dur_ms else 0.0,
+            listened_seconds=listened)
+        self._flush_stats()
 
     def _flush_stats(self):
         if getattr(self, "stats", None) and self.stats._dirty:
@@ -2810,8 +4225,11 @@ class MainWindow(QMainWindow):
         self._last_toast_ts = now
         if self.tray and self.tray.isVisible():
             title, artist = self._tag_cache.get(
-                self.current_track,
-                extract_title_artist(self.current_track))
+                self.current_track, ("", ""))
+            if not title:
+                # Never run mutagen on the UI thread for a toast — fall back
+                # to the filename stem instead.
+                title = os.path.splitext(os.path.basename(self.current_track))[0]
             body = f"{title} — {artist}" if artist else title
             self.tray.showMessage(APP_NAME, f"♪ {body}",
                 QSystemTrayIcon.MessageIcon.Information, 2500)
@@ -2830,8 +4248,16 @@ class MainWindow(QMainWindow):
             except TypeError:
                 pass  # already disconnected
             if self._cover_loader.isRunning():
-                self._cover_loader.wait(200)
-            self._cover_loader.deleteLater()
+                # Don't deleteLater() a still-running QThread — that can hard-
+                # crash ("QThread: Destroyed while thread is still running").
+                # Park it under the QApplication so Qt owns its remaining
+                # lifetime: the disconnect above blocks stale results and
+                # deleteLater fires from its own finished signal.
+                self._cover_loader.finished.connect(
+                    self._cover_loader.deleteLater)
+                self._cover_loader.setParent(QApplication.instance())
+            else:
+                self._cover_loader.deleteLater()
         self._cover_loader = CoverLoaderThread(path)
         self._cover_loader.cover_ready.connect(self._on_cover_ready)
         self._cover_loader.start()
@@ -2858,13 +4284,10 @@ class MainWindow(QMainWindow):
                 self.player_bar.set_cover_thumb(pm)
         # Keep the tray popup's cover in sync with the loaded art too.
         if getattr(self, "tray_menu_widget", None) is not None:
-            title, artist = self._tag_cache.get(
-                self.current_track,
-                extract_title_artist(self.current_track))
+            title, artist = self._current_track_tags()
             self.tray_menu_widget.update_now_playing(title, artist, pm)
         if self.mini_player and self.mini_player.isVisible() and self.current_track:
-            title, artist = extract_title_artist(self.current_track)
-            self.mini_player.update_track(title, artist, pm)
+            self.mini_player.update_track(*self._current_track_tags(), pm)
 
     def _on_play_pause(self):
         if self.current_track is None:
@@ -2889,22 +4312,43 @@ class MainWindow(QMainWindow):
             self.audio.set_volume(self.player_bar.vol_slider.value())
             self.audio.load_and_play(self.current_track)
 
-    def _cycle_playback_rate(self):
-        """Open a small popup with a speed slider (0.5x – 2.0x)."""
+    def _cycle_playback_rate(self, anchor_btn=None):
+        """Open a small popup with a speed slider (0.5x – 2.0x).
+
+        Anchors to the button that ASKED for it (rate button from the bar,
+        menu item from the ⋯ menu) and is clamped fully inside the monitor —
+        it used to always anchor to more_btn and could open off-screen.
+        Non-modal (Popup): the player keeps playing and the old modal dialog
+        no longer grabs the playlist context menu's focus away."""
         if not getattr(self, "fx", None):
             return
+        # Close a previous popup instead of stacking dialogs on fast clicks.
+        old = getattr(self, "_rate_popup", None)
+        if old is not None:
+            try:
+                old.close()
+            except Exception:
+                pass
         from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QSlider, QHBoxLayout
-        btn_pos = self.player_bar.more_btn.mapToGlobal(
-            QPoint(0, self.player_bar.more_btn.height()))
-        dlg = QDialog(self)
+        dlg = QDialog(self, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
         dlg.setWindowTitle("Playback Speed")
-        dlg.setModal(True)
+        dlg.setWindowIcon(QIcon(render_icon(Icon.SPEED, 32, self.theme["gold"],
+                                            get_dpr())))
+        dlg.setModal(False)
         dlg.setFixedWidth(280)
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self._rate_popup = dlg
         lay = QVBoxLayout(dlg)
         row = QHBoxLayout()
+        icon_lbl = QLabel()
+        icon_lbl.setPixmap(render_icon(Icon.SPEED, 22, self.theme["gold"],
+                                       get_dpr()))
+        row.addStretch(1)
+        row.addWidget(icon_lbl)
         lbl = QLabel(f"{self.fx.current_rate():.2f}x")
         lbl.setObjectName("NowTitle")
-        row.addStretch(1); row.addWidget(lbl); row.addStretch(1)
+        row.addWidget(lbl)
+        row.addStretch(1)
         lay.addLayout(row)
         slider = QSlider(Qt.Orientation.Horizontal)
         # 50..200 mapped /100 -> 0.5x..2x
@@ -2924,11 +4368,30 @@ class MainWindow(QMainWindow):
             b.clicked.connect(lambda _, pv=p: (slider.setValue(int(pv*100))))
             presets.addWidget(b)
         lay.addLayout(presets)
-        btn_pos = self.player_bar.more_btn.mapToGlobal(
-            QPoint(0, self.player_bar.more_btn.height()))
-        dlg.move(btn_pos.x() - 100, btn_pos.y() + 6)
-        dlg.exec()
-        self.player_bar.rate_btn.setToolTip(f"Playback speed: {self.fx.current_rate():g}x")
+        # ---- Anchor to the requesting button, clamp inside its monitor ----
+        if anchor_btn is None:
+            anchor_btn = self.player_bar.rate_btn \
+                if self.player_bar.rate_btn.isVisible() \
+                else self.player_bar.more_btn
+        btn_pos = anchor_btn.mapToGlobal(QPoint(0, anchor_btn.height()))
+        # Which monitor is the anchor on? (fallback: primary)
+        screen = QApplication.screenAt(
+            QPoint(btn_pos.x() + anchor_btn.width() // 2, btn_pos.y()))
+        geo = (screen if screen is not None
+               else QApplication.primaryScreen()).availableGeometry()
+        dlg.adjustSize()
+        dw, dh = dlg.width(), dlg.height()
+        x = max(geo.left() + 4,
+                min(btn_pos.x() + anchor_btn.width() // 2 - dw // 2,
+                    geo.right() - dw - 4))
+        y = btn_pos.y() + 6
+        if y + dh > geo.bottom() - 4:          # below would clip → open above
+            y = max(geo.top() + 4,
+                    anchor_btn.mapToGlobal(QPoint(0, 0)).y() - dh - 6)
+        dlg.move(x, y)
+        dlg.finished.connect(lambda _r: self.player_bar.rate_btn.setToolTip(
+            f"Playback speed: {self.fx.current_rate():g}x"))
+        dlg.show()
 
     def _on_ab_button(self):
         """First click sets A, second sets B (loop), third clears."""
@@ -2956,19 +4419,50 @@ class MainWindow(QMainWindow):
             idx = self.current_playlist.index(path)
         except ValueError:
             # Track no longer in the active playlist — play it standalone so
-            # history navigation never dies after library edits
+            # history navigation never dies after library edits.
+            # Mirror _load_and_play_current's per-track resets so the
+            # standalone path doesn't leak stale A-B loops, stale 70%
+            # meters, or a stale current_index into the next track.
+            self._err_skip_count = 0
+            if getattr(self, "fx", None):
+                self.fx.clear_ab()
+            self._finalize_listen_credit()
+            self._listened_ms = 0
             self.current_track = path
-            title, artist = extract_title_artist(path)
+            self.current_index = -1   # no valid position in current_playlist
             if path in self._tag_cache:
                 title, artist = self._tag_cache[path]
-            self.now_title.setText(title)
-            self.now_artist.setText(artist)
-            self.player_bar.title_label.setText(title)
-            self.player_bar.artist_label.setText(artist)
+            else:
+                try:
+                    title, artist = extract_title_artist(path)
+                    self._tag_cache[path] = (title, artist)
+                except Exception:
+                    title = os.path.splitext(os.path.basename(path))[0]
+                    artist = "Unknown Artist"
+                    self._tag_cache[path] = (title, artist)
+            self.now_title.setMarqueeText(title)
+            self.now_artist.setMarqueeText(artist)
+            self.player_bar.title_label.setMarqueeText(title)
+            self.player_bar.artist_label.setMarqueeText(artist)
+            self.player_bar.time_total.setText("0:00")
+            self.player_bar.time_current.setText("0:00")
+            self.player_bar.seek_slider.setValue(0)
+            self.player_bar.update_like_button(path in self.favorites)
             self._load_cover_async(path)
+            self._highlight_playing_in_lists()
             self._push_history(path)
+            if path in getattr(self, "shuffle_unplayed", set()):
+                self.shuffle_unplayed.discard(path)
             self.audio.set_volume(self.player_bar.vol_slider.value())
             self.audio.load_and_play(path)
+            if getattr(self, "fx", None):
+                self.fx.fade_in_from_silence()
+                rate = self.fx.current_rate()
+                if abs(rate - 1.0) > 1e-6:
+                    self.fx.set_rate(rate)
+            if self.mini_player and self.mini_player.isVisible():
+                self.mini_player.update_track(
+                    title, artist, self.player_bar._cover_thumb_pm)
             if getattr(self, "tray_menu_widget", None) is not None:
                 self.tray_menu_widget.update_now_playing(
                     title, artist, self.player_bar._cover_thumb_pm)
@@ -2979,7 +4473,14 @@ class MainWindow(QMainWindow):
     def _on_next(self):
         if not self.current_playlist:
             return
+        # A successful manual/auto advance means the previous error is over —
+        # reset the consecutive-error counter (used by _on_audio_error).
+        self._err_skip_count = 0
         if self.repeat_mode == RepeatMode.ONE and self.current_track:
+            # Repeat-one restart is a fresh listen of the same track: credit
+            # the finished pass under the 70% rule, then reset the meter.
+            self._finalize_listen_credit()
+            self._listened_ms = 0
             self.audio.set_position(0)
             self.audio.play()
             return
@@ -3185,8 +4686,27 @@ class MainWindow(QMainWindow):
                 state == AudioBackend.STATE_PLAYING)
 
     def _on_audio_error(self, msg):
+        # A corrupt / unsupported file must never stall the player on a dead
+        # track: finalize its (uncounted) listen credit, then auto-skip to
+        # the next track (guarding against a playlist full of bad files by
+        # capping consecutive skips).
         if self.tray and self.tray.isVisible():
             self.tray.showMessage(APP_NAME, f"Audio: {msg}", QSystemTrayIcon.MessageIcon.Warning, 3000)
+        try:
+            bad = self.current_track
+            if bad:
+                self._finalize_listen_credit()
+                self.current_track = None
+                n = getattr(self, "_err_skip_count", 0) + 1
+                self._err_skip_count = n
+                if bad in (self.current_playlist or []):
+                    if n <= max(3, len(self.current_playlist)):
+                        log.warning(f"Auto-skipping unreadable file ({n}): {bad}")
+                        QTimer.singleShot(400, self._on_next)
+                        return
+                self._err_skip_count = 0
+        except Exception as ex:
+            log.warning(f"error auto-skip failed: {ex}")
 
     def _ui_tick(self):
         if self.audio.state() == AudioBackend.STATE_PLAYING and not self.user_is_seeking:
@@ -3199,9 +4719,13 @@ class MainWindow(QMainWindow):
                 self.player_bar.seek_slider.blockSignals(False)
             self.player_bar.time_current.setText(fmt_time(pos))
             self._on_lyrics_position_tick(pos)
-        # Stats: accumulate listening time while playing
-        if getattr(self, "stats", None) and self.audio.state() == AudioBackend.STATE_PLAYING:
-            self.stats.add_seconds(0.5)
+        # Stats: accumulate listening time while playing (0.5 s per 500 ms
+        # tick) + per-track listen metering for the 70% credit rule.
+        if self.audio.state() == AudioBackend.STATE_PLAYING:
+            if getattr(self, "stats", None):
+                self.stats.add_seconds(0.5)
+            if self.current_track is not None:
+                self._listened_ms = getattr(self, "_listened_ms", 0) + 500
         # Toast notification when the window is hidden
         if getattr(self, "_toast_enabled", True):
             self._maybe_toast_track_change()
@@ -3241,15 +4765,23 @@ class MainWindow(QMainWindow):
             # Right-click: our own styled popup instead of the gray native menu
             self._show_tray_popup()
 
+    def _current_track_tags(self) -> tuple:
+        """(title, artist) for the playing track from cache only — never runs
+        mutagen on the UI thread; falls back to the filename stem."""
+        if not self.current_track:
+            return "", ""
+        title, artist = self._tag_cache.get(self.current_track, ("", ""))
+        if not title:
+            title = os.path.splitext(os.path.basename(self.current_track))[0]
+        return title, artist
+
     def _tray_sync_now_playing(self):
         """Push the current track's info (title / artist / cover) into the
         tray popup header from live app state."""
         if getattr(self, "tray_menu_widget", None) is None:
             return
         if self.current_track:
-            title, artist = self._tag_cache.get(
-                self.current_track,
-                extract_title_artist(self.current_track))
+            title, artist = self._current_track_tags()
             self.tray_menu_widget.update_now_playing(
                 title, artist, self.player_bar._cover_thumb_pm)
         else:
@@ -3331,9 +4863,10 @@ class MainWindow(QMainWindow):
         if new_folders:
             self._start_scan(new_folders, label="Scanning dropped folder...")
         else:
-            # No folder scan pending — refresh lists directly
+            # No folder scan pending — refresh lists directly. Dropped files
+            # may live outside every known folder → tree must refresh once.
             self.library.sort(key=lambda x: os.path.basename(x).lower())
-            self._rebuild_library_list()
+            self._rebuild_library_list(rebuild_tree=True)
             self._update_count_label()
             self._save_config()
         if added_files or new_folders:
@@ -3367,6 +4900,22 @@ class MainWindow(QMainWindow):
             if self.scanner is not None and self.scanner.isRunning():
                 self.scanner.cancel()
                 self.scanner.wait(2000)
+            # Cancel remaining worker threads so nothing is mid-emit when the
+            # interpreter tears down (avoids QThread destroyed warnings/crashes)
+            for attr in ("_tag_loader", "_cover_loader", "_albums_worker"):
+                t = getattr(self, attr, None)
+                if t is not None:
+                    try:
+                        t.cancel()
+                    except AttributeError:
+                        pass
+                    if t.isRunning():
+                        t.wait(1000)
+            lp = getattr(self, "_lyrics_panel", None)
+            if lp is not None and getattr(lp, "_loader", None) is not None:
+                lp._loader.cancel()
+                if lp._loader.isRunning():
+                    lp._loader.wait(1000)
             if self.mini_player is not None:
                 self.mini_player.close()
             e.accept()
@@ -3381,7 +4930,14 @@ class MainWindow(QMainWindow):
         self._force_quit = True
         if self.tray:
             self.tray.hide()
-        self._save_config()
+        # Tear down worker threads BEFORE quitting the event loop — the old
+        # code called QApplication.quit() directly, leaving CoverLoader /
+        # TagLoader / AlbumsWorker / LyricsLoader mid-emit while the
+        # interpreter tore down ("QThread: Destroyed while thread is still
+        # running" hard-crash on exit under load).
+        # close() runs MainWindow.closeEvent, which waits on every worker;
+        # tray.hide() above means closeEvent takes the _force_quit branch.
+        self.close()
         QApplication.quit()
 
     _save_timer = None
@@ -3408,7 +4964,10 @@ class MainWindow(QMainWindow):
             "last_position": self.audio.position() if self.remember_track and self.audio.available else 0,
             "shuffle": self.shuffle,
             "repeat_mode": self.repeat_mode.value,
-            "geometry": self.saveGeometry().data().hex() if self.isVisible() else None,
+            # Persist geometry even while hidden-to-tray: Qt remembers the
+            # pre-hide normal geometry, so quitting from the tray no longer
+            # resets window position/size on next launch.
+            "geometry": self.saveGeometry().data().hex(),
             "auto_rescan": self.auto_rescan,
             "remember_track": self.remember_track,
             "taskbar_close_to_tray": self.taskbar_close_to_tray,
@@ -3416,6 +4975,18 @@ class MainWindow(QMainWindow):
             "sleep_timer_active": self.sleep_timer_active,
             "sleep_timer_minutes": self.sleep_timer_minutes,
             "sort_mode": self.sort_mode.value,
+            # Settings-dialog fields that previously reset on every restart
+            "lyrics_online": bool(getattr(self, "lyrics_online_enabled", True)),
+            "audio_output_id": str(getattr(self, "audio_output_id", "") or ""),
+            "auto_theme": bool(getattr(self, "auto_theme_enabled", False)),
+            "toast_enabled": bool(getattr(self, "_toast_enabled", True)),
+            "visualizer_enabled": bool(getattr(self, "visualizer_enabled", True)),
+            "default_volume": self._validated_int(getattr(self, "_last_volume", 80), 80, 0, 100),
+            "fade_enabled": bool(getattr(self.fx, "enabled_fade", True)) if getattr(self, "fx", None) else True,
+            "fade_ms": self._validated_int(getattr(self.fx, "fade_ms", 300), 300, 100, 2000) if getattr(self, "fx", None) else 300,
+            "show_ab_button": (self.player_bar.ab_btn.isVisible() if hasattr(self, "player_bar") else False),
+            "show_rate_button": (self.player_bar.rate_btn.isVisible() if hasattr(self, "player_bar") else False),
+            "show_lyrics_button": (self.player_bar.lyrics_btn.isVisible() if hasattr(self, "player_bar") else True),
         }
         try:
             p = config_path()
@@ -3485,10 +5056,10 @@ class MainWindow(QMainWindow):
             self.current_index = idx
             self.current_track = last
             title, artist = extract_title_artist(last)
-            self.now_title.setText(title)
-            self.now_artist.setText(artist)
-            self.player_bar.title_label.setText(title)
-            self.player_bar.artist_label.setText(artist)
+            self.now_title.setMarqueeText(title)
+            self.now_artist.setMarqueeText(artist)
+            self.player_bar.title_label.setMarqueeText(title)
+            self.player_bar.artist_label.setMarqueeText(artist)
             self.player_bar.update_like_button(last in self.favorites)
             self._highlight_playing_in_lists()
             self._load_cover_async(last)
@@ -3514,6 +5085,23 @@ class MainWindow(QMainWindow):
         # Apply config on main thread (fast operations only)
         self._finish_config_load(cfg)
 
+    @staticmethod
+    def _validated_int(value, default: int, lo: int, hi: int) -> int:
+        """Coerce a config value to an int in [lo, hi]; default on any junk."""
+        try:
+            v = int(value)
+        except (TypeError, ValueError):
+            return default
+        return max(lo, min(hi, v))
+
+    @staticmethod
+    def _validated_enum(enum_cls, value, default):
+        """Coerce a config value to an enum member; default on any junk."""
+        try:
+            return enum_cls(value)
+        except ValueError:
+            return default
+
     def _finish_config_load(self, cfg):
         """Apply loaded config — fast operations only, no tag reading."""
         if cfg is None:
@@ -3538,20 +5126,40 @@ class MainWindow(QMainWindow):
                               if isinstance(k, str) and isinstance(v, list)}
         else:
             self.playlists = {}
-        vol = cfg.get("volume", 80)
+        # Corrupt/tampered values must never abort the whole load — fall
+        # back to defaults per field (ValueError/TypeError safe).
+        vol = self._validated_int(cfg.get("volume", 80), 80, 0, 100)
         self._last_volume = vol
         self.player_bar.vol_slider.setValue(vol)
-        self.shuffle = cfg.get("shuffle", False)
+        self.shuffle = bool(cfg.get("shuffle", False))
         self.player_bar.update_shuffle_button(self.shuffle)
-        rm = cfg.get("repeat_mode", 0)
-        self.repeat_mode = RepeatMode(rm)
+        self.repeat_mode = self._validated_enum(
+            RepeatMode, cfg.get("repeat_mode", 0), RepeatMode.OFF)
         self.player_bar.update_repeat_button(self.repeat_mode)
         self.auto_rescan = cfg.get("auto_rescan", True)
         self.remember_track = cfg.get("remember_track", True)
         self.taskbar_close_to_tray = bool(cfg.get("taskbar_close_to_tray", False))
         self.default_folder = cfg.get("default_folder", "")
         sm = cfg.get("sort_mode", "title")
-        self.sort_mode = SortMode(sm)
+        try:
+            self.sort_mode = SortMode(sm)
+        except ValueError:
+            self.sort_mode = SortMode.TITLE
+        # Settings-dialog fields — restore what _save_config persisted
+        self.lyrics_online_enabled = bool(cfg.get("lyrics_online", True))
+        self.audio_output_id = str(cfg.get("audio_output_id", "") or "")
+        self.auto_theme_enabled = bool(cfg.get("auto_theme", False))
+        self._toast_enabled = bool(cfg.get("toast_enabled", True))
+        self.visualizer_enabled = bool(cfg.get("visualizer_enabled", True))
+        self._last_volume = self._validated_int(cfg.get("default_volume", vol), vol, 0, 100)
+        if getattr(self, "fx", None):
+            self.fx.enabled_fade = bool(cfg.get("fade_enabled", True))
+            self.fx.fade_ms = self._validated_int(cfg.get("fade_ms", 300), 300, 100, 2000)
+        # Sleep timer is persisted so it survives restarts too
+        self.sleep_timer_minutes = self._validated_int(
+            cfg.get("sleep_timer_minutes", 30), 30, 1, 480)
+        if bool(cfg.get("sleep_timer_active", False)):
+            self.start_sleep_timer(self.sleep_timer_minutes)
         if hasattr(self, "sort_combo"):
             idx = self.sort_combo.findData(sm)
             if idx >= 0:
@@ -3567,6 +5175,16 @@ class MainWindow(QMainWindow):
         # Filter missing files (fast — os.path.exists)
         self.library = [p for p in self.library if os.path.exists(p)]
         self.favorites = {p for p in self.favorites if os.path.exists(p)}
+        # The stats seed at __init__ ran before added_folders was known —
+        # refresh moved-file search roots now that folders are populated.
+        try:
+            from playstats import set_search_roots
+            _roots = list(self.added_folders or [])
+            _roots += list({os.path.dirname(os.path.abspath(p))
+                            for p in self.library if p})
+            set_search_roots(_roots)
+        except Exception:
+            pass
 
         # Rebuild list FAST (filenames only, no tag reading)
         # Load tag cache first (instant — no I/O)
@@ -3589,10 +5207,10 @@ class MainWindow(QMainWindow):
             else:
                 title = os.path.splitext(os.path.basename(last))[0]
                 artist = "Unknown Artist"
-            self.now_title.setText(title)
-            self.now_artist.setText(artist)
-            self.player_bar.title_label.setText(title)
-            self.player_bar.artist_label.setText(artist)
+            self.now_title.setMarqueeText(title)
+            self.now_artist.setMarqueeText(artist)
+            self.player_bar.title_label.setMarqueeText(title)
+            self.player_bar.artist_label.setMarqueeText(artist)
             self.player_bar.update_like_button(last in self.favorites)
             self._highlight_playing_in_lists()
             self._load_cover_async(last)
@@ -3603,6 +5221,26 @@ class MainWindow(QMainWindow):
         # Start rescan in background
         if self.auto_rescan:
             QTimer.singleShot(100, self._startup_rescan)
+
+        # Apply restored UI toggles + audio output + auto-theme (all were
+        # persisted by _save_config; see FUNC-4 fix — these used to reset
+        # to defaults on every restart).
+        if hasattr(self, "player_bar"):
+            self.player_bar.ab_btn.setVisible(bool(cfg.get("show_ab_button", False)))
+            self.player_bar.rate_btn.setVisible(bool(cfg.get("show_rate_button", False)))
+            self.player_bar.lyrics_btn.setVisible(bool(cfg.get("show_lyrics_button", True)))
+        if self.audio_output_id:
+            try:
+                from audio_output import apply_output_device
+                apply_output_device(self.audio, self.audio_output_id)
+            except Exception as e:
+                log.warning(f"restored audio output unavailable: {e}")
+        if self.auto_theme_enabled:
+            self._apply_auto_theme_setting()
+
+        # Warm album groups + covers in the background so the Albums page is
+        # instant on first visit (user request: preload, keep, revisit fast).
+        QTimer.singleShot(1500, self._preload_albums_background)
 
     def _restore_position(self, path, pos):
         if self.current_track == path:
@@ -3638,11 +5276,26 @@ def _acquire_single_instance_lock() -> bool:
             return False
         return True
     except ImportError:
-        # pywin32 missing — fall back to a lock-file heuristic
+        # pywin32 missing — fall back to a lock-file heuristic. A crashed run
+        # leaves the file behind, so verify the recorded pid is still alive
+        # before refusing to start.
         try:
             lock = config_path().parent / "instance.lock"
             if lock.exists():
-                return False
+                try:
+                    pid = int(lock.read_text(encoding="utf-8").strip() or 0)
+                except (OSError, ValueError):
+                    pid = 0
+                if pid and pid != os.getpid():
+                    try:
+                        os.kill(pid, 0)     # raises OSError if pid is gone
+                        return False        # a live instance really is running
+                    except PermissionError:
+                        return False        # exists but not ours — treat as running
+                    except OSError:
+                        pass                # stale lock from a crashed run
+                lock.write_text(str(os.getpid()), encoding="utf-8")
+                return True
             lock.write_text(str(os.getpid()), encoding="utf-8")
             return True
         except OSError:
@@ -3704,13 +5357,18 @@ def _raise_window_by_title(title_substring: str) -> bool:
 
 
 def _install_crash_guard(app):
-    """Log + swallow unhandled Python exceptions raised inside Qt slots.
+    """Log unhandled exceptions AND exceptions raised inside Qt slots.
 
-    A desktop player must not die because one signal handler threw. The
-    exception is logged with full traceback; truly fatal conditions (MemoryError)
-    are re-raised so the OS can see them.
+    sys.excepthook alone never fires for exceptions inside Qt slots in
+    PyQt6 — they propagate through QApplication.notify(). A subclassed
+    QApplication overrides notify() (the official interception point):
+    a slot that throws is logged with full traceback and swallowed so one
+    bad handler can't kill the player. threading.excepthook +
+    unraisablehook cover worker-thread deaths (scanner, tag/cover loaders).
+    Truly fatal conditions (MemoryError) are re-raised.
     """
     import traceback as _tb
+    import threading as _threading
 
     def excepthook(exc_type, exc_value, exc_tb):
         if issubclass(exc_type, (KeyboardInterrupt, SystemExit, MemoryError)):
@@ -3721,13 +5379,51 @@ def _install_crash_guard(app):
 
     sys.excepthook = excepthook
 
-    # Qt 6.5+: exceptions in slots propagate through the event loop; notify()
-    # is the official interception point.
-    from PyQt6.QtCore import qInstallMessageHandler  # noqa: F401 (already installed)
+    def thread_excepthook(args):
+        try:
+            if issubclass(args.exc_type,
+                           (KeyboardInterrupt, SystemExit, MemoryError)):
+                sys.__excepthook__(args.exc_type, args.exc_value,
+                                   args.exc_traceback)
+                return
+            log.error("Unhandled thread exception "
+                      f"({getattr(args, 'thread', None) and args.thread.name}):\n" +
+                      "".join(_tb.format_exception(args.exc_type, args.exc_value,
+                                                   args.exc_traceback)))
+        except Exception:
+            pass
+
+    _threading.excepthook = thread_excepthook
+
     try:
-        app.installEventFilter(None)  # no-op placeholder keeps imports tidy
+        def _unraisable(args):
+            try:
+                log.error("Unraisable exception "
+                          f"({getattr(args, 'where', '')}): "
+                          f"{args.exc_value!r}")
+            except Exception:
+                pass
+        sys.unraisablehook = _unraisable
     except Exception:
         pass
+
+    # Qt 6.5+: exceptions in slots propagate through the event loop — route
+    # notify() failures to the excepthook above.
+    cls = type(app)
+    if not getattr(cls, "_gm_notify_guarded", False):
+        cls._gm_notify_guarded = True
+        _orig_notify = cls.notify
+
+        def _guarded_notify(self, receiver, event):
+            try:
+                return _orig_notify(self, receiver, event)
+            except (KeyboardInterrupt, SystemExit, MemoryError):
+                raise
+            except Exception:
+                excepthook(*sys.exc_info())
+                return False
+
+        cls.notify = _guarded_notify
 
 
 def _enable_windows_glass(widget):

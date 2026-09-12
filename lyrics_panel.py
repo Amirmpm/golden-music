@@ -188,7 +188,8 @@ class LyricsPanel(QFrame):
             self._line_labels.append(lbl)
 
     def sync_position(self, pos_ms: int):
-        """Highlight the active line when synced lyrics are shown."""
+        """Highlight the active line when synced lyrics are shown, scrolling
+        it into view (centered) so long lyrics follow the song."""
         ly = self._lyrics
         if not ly or not ly.synced or not self._line_labels:
             return
@@ -203,6 +204,15 @@ class LyricsPanel(QFrame):
             self._line_labels[idx].setStyleSheet(
                 f"color: {t['gold_light']}; font-size: 15px; font-weight: 700;"
                 f"background: transparent;")
+            # Auto-scroll the new active line to the vertical center.
+            try:
+                scroll = self.findChild(QScrollArea)
+                if scroll is not None:
+                    scroll.ensureWidgetVisible(
+                        self._line_labels[idx], 0,
+                        max(60, scroll.viewport().height() // 2 - 30))
+            except Exception:
+                pass
         self._active_line = idx
 
     def _restyle_lines(self):

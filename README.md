@@ -192,7 +192,7 @@ pip install -r requirements.txt
 pip install pywin32
 
 # Run
-python main.py
+python main.pyw
 ```
 
 ### Option 3: Build the Portable exe / Installer Yourself
@@ -219,7 +219,7 @@ Output:
 
 ```
 golden-music/
-├── main.py                  # Main window, library, player bar, rail, pages
+├── main.pyw                 # Main window, library, player bar, rail, pages
 ├── config.py                # 12 themes, QSS builder, safe config loaders
 ├── audio.py                 # QMediaPlayer audio backend
 ├── audio_output.py          # Audio output device enumeration/switching
@@ -304,7 +304,7 @@ Golden Music stores its configuration at:
 ```
 
 *Portable mode:* if a `goldenmusic_config.json` sits next to the executable
-(or `main.py`), the app stores everything in that folder instead — handy for
+(or `main.pyw`), the app stores everything in that folder instead — handy for
 USB-stick installs.
 
 **What's stored:**

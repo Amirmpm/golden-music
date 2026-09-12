@@ -112,4 +112,12 @@ if errors:
     for n, tb in errors:
         print(f"\n--- {n} ---\n{tb}")
     sys.exit(1)
+# Wait out the background tag loader so the interpreter never tears down
+# while a QThread is mid-emit (that aborts the process AFTER "passed").
+try:
+    w._tag_loader.cancel()
+    if w._tag_loader is not None and w._tag_loader.isRunning():
+        w._tag_loader.wait(2000)
+except Exception:
+    pass
 print("ALL SMART-SHUFFLE TESTS PASSED!")

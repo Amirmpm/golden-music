@@ -3,7 +3,7 @@ Golden Music — Application logging.
 
 File-based logging next to the config directory with size-based rotation
 (5 files x 1 MiB). Every module logs through `logging.getLogger(__name__)`;
-this module only needs to be configured once at startup (main.py).
+this module only needs to be configured once at startup (main.pyw).
 
 Also installs a Qt message handler so qWarning/qCritical from the Qt side
 (media backend errors, plugin problems) land in the same file.

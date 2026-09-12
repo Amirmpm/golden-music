@@ -12,7 +12,7 @@ import sys
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from PyQt6.QtCore import Qt, qInstallMessageHandler  # noqa: E402
+from PyQt6.QtCore import Qt, QtMsgType, qInstallMessageHandler  # noqa: E402
 from PyQt6.QtGui import QImage, QPainter  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QListWidget, QListWidgetItem  # noqa: E402
 
@@ -23,7 +23,7 @@ warnings = []
 
 
 def handler(mode, ctx, message):
-    if mode == Qt.MsgType.QtWarningMsg:
+    if mode == QtMsgType.QtWarningMsg:
         warnings.append(message)
 
 
