@@ -4335,7 +4335,7 @@ class MainWindow(QMainWindow):
         dlg.setWindowIcon(QIcon(render_icon(Icon.SPEED, 32, self.theme["gold"],
                                             get_dpr())))
         dlg.setModal(False)
-        dlg.setFixedWidth(280)
+        dlg.setFixedWidth(320)
         dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self._rate_popup = dlg
         lay = QVBoxLayout(dlg)
@@ -4361,10 +4361,32 @@ class MainWindow(QMainWindow):
             self.fx.set_rate(v / 100.0)
         slider.valueChanged.connect(_on_move)
         lay.addWidget(slider)
+        # Preset buttons with Lucide icons — consistent with the app's icon style
         presets = QHBoxLayout()
+        current_rate = self.fx.current_rate()
+        # Map each preset to an appropriate speed icon
+        # 0.5x = turtle-slow, 0.75x = slower, 1.0x = normal (play), 1.25x = slightly faster,
+        # 1.5x = fast (chevron-right), 2.0x = fastest (double chevron concept via gauge)
+        preset_icons = {
+            0.5: "timer",           # very slow
+            0.75: "chevron-left",   # slow
+            1.0: "play",            # normal speed
+            1.25: "music-note",     # slightly faster
+            1.5: "chevron-right",   # fast
+            2.0: "gauge",           # fastest (speed gauge)
+        }
+        dpr = get_dpr()
         for p in (0.5, 0.75, 1.0, 1.25, 1.5, 2.0):
-            b = QPushButton(f"{p:g}x")
+            b = QPushButton()
             b.setObjectName("GhostBtn")
+            # Create icon for this preset
+            icon_name = preset_icons[p]
+            is_current = abs(p - current_rate) < 0.01
+            icon_color = self.theme["gold"] if is_current else self.theme["text"]
+            b.setIcon(make_icon(icon_name, 16, icon_color, dpr))
+            b.setIconSize(QSize(16, 16))
+            b.setText(f"{p:g}x")
+            b.setToolTip(f"Set speed to {p:g}x")
             b.clicked.connect(lambda _, pv=p: (slider.setValue(int(pv*100))))
             presets.addWidget(b)
         lay.addLayout(presets)
