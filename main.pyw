@@ -4335,7 +4335,7 @@ class MainWindow(QMainWindow):
         dlg.setWindowIcon(QIcon(render_icon(Icon.SPEED, 32, self.theme["gold"],
                                             get_dpr())))
         dlg.setModal(False)
-        dlg.setFixedWidth(320)
+        dlg.setFixedWidth(380)
         dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self._rate_popup = dlg
         lay = QVBoxLayout(dlg)
@@ -4361,12 +4361,13 @@ class MainWindow(QMainWindow):
             self.fx.set_rate(v / 100.0)
         slider.valueChanged.connect(_on_move)
         lay.addWidget(slider)
-        # Preset buttons with Lucide icons — consistent with the app's icon style
-        presets = QHBoxLayout()
+        # Preset buttons: 2 rows x 3 cols so every button has room for a
+        # 22px icon AND full text. The old single-row layout squeezed 6
+        # icon+text buttons into ~50px each and Qt elided the labels ("0.").
+        presets = QGridLayout()
+        presets.setSpacing(8)
+        presets.setContentsMargins(4, 2, 4, 2)
         current_rate = self.fx.current_rate()
-        # Map each preset to an appropriate speed icon
-        # 0.5x = turtle-slow, 0.75x = slower, 1.0x = normal (play), 1.25x = slightly faster,
-        # 1.5x = fast (chevron-right), 2.0x = fastest (double chevron concept via gauge)
         preset_icons = {
             0.5: "timer",           # very slow
             0.75: "chevron-left",   # slow
@@ -4375,20 +4376,32 @@ class MainWindow(QMainWindow):
             1.5: "chevron-right",   # fast
             2.0: "gauge",           # fastest (speed gauge)
         }
-        dpr = get_dpr()
-        for p in (0.5, 0.75, 1.0, 1.25, 1.5, 2.0):
+        cur = self.theme.get("gold", "#d4a85a")
+        txt = self.theme.get("text", "#ffffff")
+        gold_light = self.theme.get("gold_light", cur)
+        for i, p in enumerate((0.5, 0.75, 1.0, 1.25, 1.5, 2.0)):
             b = QPushButton()
-            b.setObjectName("GhostBtn")
-            # Create icon for this preset
-            icon_name = preset_icons[p]
             is_current = abs(p - current_rate) < 0.01
-            icon_color = self.theme["gold"] if is_current else self.theme["text"]
-            b.setIcon(make_icon(icon_name, 16, icon_color, dpr))
-            b.setIconSize(QSize(16, 16))
+            icon_color = cur if is_current else txt
+            b.setIcon(make_icon(preset_icons[p], 22, icon_color, get_dpr()))
+            b.setIconSize(QSize(22, 22))
             b.setText(f"{p:g}x")
             b.setToolTip(f"Set speed to {p:g}x")
+            b.setMinimumSize(112, 52)
+            # Inline style (not QSS objectName) so it works even if the
+            # app-wide stylesheet was already applied before the popup opens.
+            border = cur if is_current else "rgba(255,255,255,0.16)"
+            b.setStyleSheet(
+                "QPushButton {"
+                f" background: {'rgba(212,168,90,0.16)' if is_current else 'transparent'};"
+                f" color: {gold_light if is_current else txt};"
+                f" border: 1px solid {border}; border-radius: 12px;"
+                " font-size: 13px; font-weight: 600; padding: 6px 8px; }"
+                "QPushButton:hover {"
+                f" background: rgba(212,168,90,0.22); border-color: {cur};"
+                f" color: {gold_light}; }}")
             b.clicked.connect(lambda _, pv=p: (slider.setValue(int(pv*100))))
-            presets.addWidget(b)
+            presets.addWidget(b, i // 3, i % 3)
         lay.addLayout(presets)
         # ---- Anchor to the requesting button, clamp inside its monitor ----
         if anchor_btn is None:
