@@ -4899,13 +4899,41 @@ class MainWindow(QMainWindow):
         self.tray_menu_widget.raise_()
         self.tray_menu_widget.activateWindow()
 
+    def _reveal_window(self):
+        """Un-minimize, show, raise and focus the main window.
+
+        show() alone remembers a previous minimized state and raise_() cannot
+        take the Windows foreground by itself, so the full restore dance lives
+        here. Shared by the tray left-click and the tray popup's Show button.
+        """
+        self.setWindowState(
+            (self.windowState() & ~Qt.WindowState.WindowMinimized)
+            | Qt.WindowState.WindowActive)
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        if sys.platform == "win32":
+            # Windows foreground-lock: a background process may not steal
+            # focus; nudge the shell so the restored window really lands on
+            # top (harmless no-op when it already has focus).
+            try:
+                import ctypes
+                ctypes.windll.user32.SetForegroundWindow(int(self.winId()))
+            except Exception as e:
+                log.debug(f"SetForegroundWindow unavailable: {e}")
+
     def _toggle_visible(self):
-        if self.isVisible():
+        """Tray Show/Hide toggle.
+
+        A minimized (or hidden) window must always come back restored and on
+        top — never left minimized behind other windows, never hidden by a
+        "show" click. isVisible() is true for minimized windows, so the
+        minimized state is part of the predicate.
+        """
+        if self.isVisible() and not self.isMinimized():
             self.hide()
         else:
-            self.show()
-            self.raise_()
-            self.activateWindow()
+            self._reveal_window()
 
     # ------------------------------------------------------------------
     # Drag & drop from the OS file manager

@@ -164,11 +164,11 @@ class TrayMenuWidget(QFrame):
         layout.addWidget(divider)
         self._dividers.append(divider)
 
-        # Row 2: show / quit / close-menu
+        # Row 2: show/hide / quit / close-menu
         row2 = QHBoxLayout()
         row2.setSpacing(4)
-        self.btn_show = TrayIconButton(Icon.CHEVRON_RIGHT, 22, "Show")
-        self.btn_show.setToolTip("Show / Hide")
+        self.btn_show = TrayIconButton(Icon.CHEVRON_RIGHT, 22, "Show/Hide")
+        self.btn_show.setToolTip("Show or hide the window")
         self.btn_quit = TrayIconButton(Icon.CLOSE, 22, "Quit")
         self.btn_quit.setToolTip("Quit")
         self.btn_close = TrayIconButton(Icon.CHEVRON_DOWN, 22, "Close")
