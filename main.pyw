@@ -69,6 +69,8 @@ from tray_menu import TrayMenuWidget
 from theme_picker import ThemePickerPopup
 import coverart
 import ipc
+import updater
+from update_dialog import UpdateCheckWorker, UpdateBanner, UpdateDialog
 from mediakeys import MediaKeyFilter
 
 try:
@@ -88,7 +90,9 @@ def _scratch_prefixes():
         out.add(os.path.normcase(os.path.abspath(tempfile.gettempdir())))
     except Exception:
         pass
-    for cand in (r"C:\Windows\Temp", "/tmp", "/var/tmp"):
+    # OS scratch roots listed literally so we can REJECT them during config
+    # persistence (never-wipe guard) — they are never used as storage here.
+    for cand in (r"C:\Windows\Temp", "/tmp", "/var/tmp"):  # nosec B108 — exclusion list, never a write target
         try:
             out.add(os.path.normcase(os.path.abspath(cand)))
         except Exception:
@@ -1779,6 +1783,17 @@ class MainWindow(QMainWindow):
         self._listened_ms = 0
         self._last_toast_key = None
 
+        # Auto-update state (persisted; see _save_config / _load_config_async)
+        self.updates_enabled = True
+        self.update_last_check = 0.0
+        self.update_etag = ""
+        self.update_skip_version = ""
+        self.update_snooze_until = 0.0
+        self._update_worker = None
+        self._last_update_result = None
+        self._pending_install_path = None
+        self._updated_flag = False
+
         # Threads
         self.scanner = None
         self._scan_results_pending = None
@@ -2013,6 +2028,9 @@ class MainWindow(QMainWindow):
 
         # Player bar
         self.player_bar = PlayerBar(self.theme)
+        # Non-modal update badge — pinned above the player bar, bottom-right
+        self._update_banner = UpdateBanner(self)
+        self._update_banner.reposition_if_visible()
         outer.addWidget(self.player_bar)
         # Cover click → fullscreen player; title/artist click →
         # track info dialog (separate handlers so the cover opens the
@@ -4348,6 +4366,138 @@ class MainWindow(QMainWindow):
         if getattr(self, "_toast_label", None) is not None and \
                 self._toast_label.isVisible():
             self._position_toast()
+        b = getattr(self, "_update_banner", None)
+        if b is not None:
+            b.reposition_if_visible()
+
+    # ------------------------------------------------------------------
+    # In-app auto-update (engine in updater.py; UI in update_dialog.py)
+    # ------------------------------------------------------------------
+    _UPDATE_CHECK_DELAY_MS = 25_000        # first check ~25 s after boot
+    _UPDATE_CHECK_INTERVAL_S = 24 * 3600   # at most once per 24 h
+
+    def updates_dir(self):
+        return config_path().parent / "updates"
+
+    def _schedule_update_check(self):
+        if getattr(self, "_smoke", False):
+            return
+        QTimer.singleShot(self._UPDATE_CHECK_DELAY_MS,
+                          self._maybe_auto_update_check)
+
+    def _maybe_auto_update_check(self):
+        if not bool(getattr(self, "updates_enabled", True)):
+            return
+        now = time.time()
+        if now - float(getattr(self, "update_last_check", 0) or 0) \
+                < self._UPDATE_CHECK_INTERVAL_S:
+            return
+        self._run_update_check(manual=False)
+
+    def _run_update_check(self, manual: bool):
+        """Spawn a background probe. Manual checks always give explicit
+        feedback; automatic ones stay silent unless an update shows up."""
+        if getattr(self, "_update_worker", None) is not None:
+            return
+        self.update_last_check = time.time()
+        self._save_config_debounced()
+        self._update_worker = UpdateCheckWorker(
+            APP_VERSION, etag=getattr(self, "update_etag", "") or None,
+            parent=self)
+        self._update_worker.finished_with.connect(
+            lambda r, m=manual: self._on_update_check_done(r, m))
+        self._update_worker.start()
+
+    def _on_update_check_done(self, result: dict, manual: bool):
+        self._update_worker = None
+        status = result.get("status", "error")
+        if status == "update_available":
+            self._last_update_result = result
+            self.update_etag = result.get("etag") or getattr(
+                self, "update_etag", "")
+            self._save_config_debounced()
+            release = result["release"]
+            if manual:
+                self._hide_update_banner()
+                UpdateDialog(self, release, result["asset"]).exec()
+                return
+            if (release["version"] != getattr(self, "update_skip_version", "")
+                    and time.time() >= float(
+                        getattr(self, "update_snooze_until", 0) or 0)):
+                self._show_update_banner(release, result["asset"])
+            return
+        if manual:
+            # Explicit feedback for the Settings → About button.
+            if status in ("up_to_date", "not_modified"):
+                QMessageBox.information(
+                    self, APP_NAME,
+                    f"You're up to date — Golden Music v{APP_VERSION} is "
+                    "the latest version.")
+            elif status == "rate_limited":
+                QMessageBox.warning(
+                    self, APP_NAME,
+                    "GitHub is rate-limiting update checks right now. "
+                    "Please try again later.")
+            else:
+                QMessageBox.warning(
+                    self, APP_NAME,
+                    "Could not check for updates (offline or GitHub "
+                    "unreachable). Please try again later.")
+
+    def _show_update_banner(self, release, asset):
+        self._update_banner.show_for(release)
+
+    def _hide_update_banner(self):
+        self._update_banner.setVisible(False)
+
+    def _open_update_dialog(self):
+        r = getattr(self, "_last_update_result", None)
+        if not r or r.get("status") != "update_available":
+            return
+        self._hide_update_banner()
+        UpdateDialog(self, r["release"], r["asset"]).exec()
+
+    def snooze_update(self):
+        self.update_snooze_until = time.time() + self._UPDATE_CHECK_INTERVAL_S
+        self._hide_update_banner()
+        self._save_config_debounced()
+
+    def skip_update_version(self, version: str):
+        self.update_skip_version = str(version or "")
+        self._hide_update_banner()
+        self._save_config_debounced()
+
+    def set_pending_install(self, installer_path: str):
+        """'Install when I quit' — the verified installer runs at exit."""
+        self._pending_install_path = str(installer_path)
+
+    def launch_update_and_quit(self, installer_path: str) -> bool:
+        """Full self-update: detached installer + graceful exit."""
+        if not updater.launch_installer(installer_path):
+            return False
+        self._quit()
+        return True
+
+    def _handle_update_startup(self):
+        """Post-boot update bookkeeping: clean stale downloads, evaluate
+        the pending marker, celebrate a finished update, schedule the
+        first automatic check."""
+        try:
+            updater.clean_stale_downloads(self.updates_dir())
+            outcome = updater.evaluate_pending_marker(
+                self.updates_dir(), APP_VERSION, self._updated_flag)
+            if self._updated_flag:
+                self._show_toast(f"Updated to v{APP_VERSION} ✓")
+            if outcome and outcome.get("kind") == "incomplete":
+                QMessageBox.warning(
+                    self, APP_NAME,
+                    f"The last update to v{outcome['target']} didn't "
+                    "complete. Your data is untouched.\n\n"
+                    f"Log: {config_path().parent / 'goldenmusic.log'}\n"
+                    f"Download again from: {updater.RELEASES_PAGE_URL}")
+        except Exception as e:
+            log.debug(f"update startup handling failed: {e}")
+        self._schedule_update_check()
 
     # Track-change toast (in-app only)
     # ------------------------------------------------------------------
@@ -5142,6 +5292,14 @@ class MainWindow(QMainWindow):
         self._force_quit = True
         if self.tray:
             self.tray.hide()
+        # 'Install when I quit': the verified installer launches detached,
+        # /CLOSEAPPLICATIONS handles the still-open process via AppMutex.
+        pending = getattr(self, "_pending_install_path", None)
+        if pending and os.path.isfile(pending):
+            try:
+                updater.launch_installer(pending)
+            except Exception as e:
+                log.warning(f"pending update install failed: {e}")
         # Tear down worker threads BEFORE quitting the event loop — the old
         # code called QApplication.quit() directly, leaving CoverLoader /
         # TagLoader / AlbumsWorker / LyricsLoader mid-emit while the
@@ -5226,6 +5384,11 @@ class MainWindow(QMainWindow):
             "auto_theme": bool(getattr(self, "auto_theme_enabled", False)),
             "toast_enabled": bool(getattr(self, "_toast_enabled", True)),
             "tray_notice_shown": bool(getattr(self, "tray_notice_shown", False)),
+            "updates_enabled": bool(getattr(self, "updates_enabled", True)),
+            "update_last_check": float(getattr(self, "update_last_check", 0) or 0),
+            "update_etag": str(getattr(self, "update_etag", "") or ""),
+            "update_skip_version": str(getattr(self, "update_skip_version", "") or ""),
+            "update_snooze_until": float(getattr(self, "update_snooze_until", 0) or 0),
             "visualizer_enabled": bool(getattr(self, "visualizer_enabled", True)),
             "default_volume": self._validated_int(getattr(self, "_last_volume", 80), 80, 0, 100),
             "fade_enabled": bool(getattr(self.fx, "enabled_fade", True)) if getattr(self, "fx", None) else True,
@@ -5272,6 +5435,11 @@ class MainWindow(QMainWindow):
         self.remember_track = cfg.get("remember_track", True)
         self.taskbar_close_to_tray = bool(cfg.get("taskbar_close_to_tray", False))
         self.tray_notice_shown = bool(cfg.get("tray_notice_shown", False))
+        self.updates_enabled = bool(cfg.get("updates_enabled", True))
+        self.update_last_check = float(cfg.get("update_last_check", 0) or 0)
+        self.update_etag = str(cfg.get("update_etag", "") or "")
+        self.update_skip_version = str(cfg.get("update_skip_version", "") or "")
+        self.update_snooze_until = float(cfg.get("update_snooze_until", 0) or 0)
         self.default_folder = cfg.get("default_folder", "")
         self.sleep_timer_active = cfg.get("sleep_timer_active", False)
         self.sleep_timer_minutes = cfg.get("sleep_timer_minutes", 30)
@@ -5387,6 +5555,11 @@ class MainWindow(QMainWindow):
         self.remember_track = cfg.get("remember_track", True)
         self.taskbar_close_to_tray = bool(cfg.get("taskbar_close_to_tray", False))
         self.tray_notice_shown = bool(cfg.get("tray_notice_shown", False))
+        self.updates_enabled = bool(cfg.get("updates_enabled", True))
+        self.update_last_check = float(cfg.get("update_last_check", 0) or 0)
+        self.update_etag = str(cfg.get("update_etag", "") or "")
+        self.update_skip_version = str(cfg.get("update_skip_version", "") or "")
+        self.update_snooze_until = float(cfg.get("update_snooze_until", 0) or 0)
         self.default_folder = cfg.get("default_folder", "")
         sm = cfg.get("sort_mode", "title")
         try:
@@ -5685,6 +5858,11 @@ def main():
     smoke = "--smoke" in sys.argv
     if smoke:
         sys.argv.remove("--smoke")
+    # Passed by the Inno [Run] entry after a successful self-update:
+    # celebrate once + evaluate the pending marker + resume last track.
+    updated_flag = "--updated" in sys.argv
+    if updated_flag:
+        sys.argv.remove("--updated")
     # "Open with" / file-association launches pass media files in argv.
     argv_files = _audio_files_from_argv(sys.argv[1:])
     if sys.platform == 'win32' and not smoke:
@@ -5709,11 +5887,13 @@ def main():
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
     w = MainWindow()
+    w._updated_flag = updated_flag
     _install_crash_guard(app)
     w.show()
     _enable_windows_glass(w)
     if QSystemTrayIcon.isSystemTrayAvailable():
         w.tray.show()
+    w._handle_update_startup()
     # Cold-start "Open with": give async init (config load, theme apply) a
     # moment, then queue and play the handed-over files.
     if argv_files and not smoke:

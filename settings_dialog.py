@@ -354,6 +354,24 @@ class SettingsDialog(QDialog):
         version_label.setStyleSheet(f"color: {self.theme['muted']};")
         layout.addWidget(version_label)
 
+        layout.addSpacing(10)
+
+        # --- Updates -----------------------------------------------------
+        self.updates_cb = QCheckBox("Automatically check for updates (once a day)")
+        self.updates_cb.setChecked(bool(getattr(
+            self.main_window, "updates_enabled", True)))
+        layout.addWidget(self.updates_cb, 0, Qt.AlignmentFlag.AlignHCenter)
+        btn_check = QPushButton("Check for updates now")
+        btn_check.setObjectName("GoldBtn")
+        btn_check.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_check.clicked.connect(
+            lambda: self.main_window._run_update_check(manual=True))
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(btn_check)
+        row.addStretch(1)
+        layout.addLayout(row)
+
         layout.addSpacing(16)
 
         # Stats
@@ -384,6 +402,7 @@ class SettingsDialog(QDialog):
         self.auto_theme_cb.setChecked(getattr(self.main_window, 'auto_theme_enabled', False))
         self.toast_cb.setChecked(getattr(self.main_window, '_toast_enabled', True))
         self.tray_min_cb.setChecked(getattr(self.main_window, 'taskbar_close_to_tray', False))
+        self.updates_cb.setChecked(getattr(self.main_window, 'updates_enabled', True))
 
         # Playback
         self.default_vol_spin.setValue(getattr(self.main_window, '_last_volume', 80))
@@ -491,6 +510,7 @@ class SettingsDialog(QDialog):
         self.main_window._apply_auto_theme_setting()
         self.main_window._toast_enabled = self.toast_cb.isChecked()
         self.main_window.taskbar_close_to_tray = self.tray_min_cb.isChecked()
+        self.main_window.updates_enabled = self.updates_cb.isChecked()
 
         # Apply playback effects
         self.main_window._last_volume = self.default_vol_spin.value()

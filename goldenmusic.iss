@@ -142,6 +142,10 @@ Name: "{userstartup}\{#AppName}"; Filename: "{app}\{#AppExeName}"; IconFilename:
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName} now"; \
     Flags: nowait postinstall skipifsilent
+; After a silent self-update the app relaunches itself and shows an
+; "Updated to vX.Y.Z" toast. Skipped on normal (postinstall) launches.
+Filename: "{app}\{#AppExeName}"; Parameters: "--updated"; \
+    Flags: nowait skipifnotsilent runasoriginaluser
 
 [Code]
 const

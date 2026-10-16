@@ -54,7 +54,9 @@ def _norm(s: str) -> str:
 
 def _key(title: str, artist: str) -> str:
     raw = f"{_norm(artist)}|{_norm(title)}".encode("utf-8", "replace")
-    return hashlib.sha1(raw).hexdigest()[:32]
+    # Cache filename fingerprint only — not a security decision, so SHA1 is
+    # explicitly non-security here (also keeps Bandit B324 quiet honestly).
+    return hashlib.sha1(raw, usedforsecurity=False).hexdigest()[:32]
 
 
 def _to_lrc_text(ly) -> str:

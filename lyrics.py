@@ -312,8 +312,12 @@ def fetch_online(title: str, artist: str, duration_s=None, timeout=8):
     headers = {"User-Agent": "GoldenMusic/1.2 (desktop music player)"}
 
     def _get_json(url):
+        # The endpoint is the hardcoded https://lrclib.net API (built via
+        # urlencode below); enforce https before opening (Bandit B310).
+        if urllib.parse.urlparse(url).scheme != "https":
+            raise ValueError("lyrics lookup requires https")
         req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:  # nosec B310 — https enforced above, fixed trusted host
             return json.loads(r.read(MAX_LYRICS_BYTES).decode("utf-8"))
 
     try:
