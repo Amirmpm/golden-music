@@ -83,6 +83,7 @@ jobs:
         shell: pwsh
         run: |
           $exe = "dist/installer/GoldenMusicSetup-${{ steps.ver.outputs.version }}.exe"
+          $iskey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{9F5E7C8D-3B2E-5C4F-AC6D-2B3C4D5E6F7A}_is1"
           # Wait on the installer PID only — Start-Process -Wait waits for ALL
           # descendants, and the [Run] 'skipifnotsilent --updated' entry
           # launches the tray app, which never exits on a runner.
@@ -97,23 +98,33 @@ jobs:
             Stop-Process -Name "GoldenMusic" -Force -ErrorAction SilentlyContinue
             Start-Sleep -Seconds 3
           }
+          function Find-Uninstaller {
+            # authoritative: the Inno _is1 key's UninstallString (quoted path)
+            $key = Get-ItemProperty $iskey -ErrorAction SilentlyContinue
+            if ($key) {
+              $ustr = [string]$key.UninstallString
+              if ($ustr -match '^"([^"]+unins000\.exe)"') {
+                $u = Get-Item $Matches[1] -ErrorAction SilentlyContinue
+                if ($u) { return $u }
+              }
+            }
+            # fallback: standard per-user / per-machine dirs ("Golden Music")
+            Get-ChildItem "$env:LOCALAPPDATA\Programs\Golden Music\unins000.exe",
+                          "$env:ProgramFiles\Golden Music\unins000.exe" `
+                          -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
           # 1. silent first install
           Invoke-Setup $exe @("/VERYSILENT","/SUPPRESSMSGBOXES","/NOCANCEL","/NORESTART")
-          $unins = Get-ChildItem "$env:LOCALAPPDATA\Programs\GoldenMusic\unins000.exe" -ErrorAction SilentlyContinue
-          if (-not $unins) { $unins = Get-ChildItem "$env:ProgramFiles\GoldenMusic\unins000.exe" -ErrorAction SilentlyContinue }
+          $unins = Find-Uninstaller
           if (-not $unins) { throw "smoke: unins000.exe missing after install" }
           # 2. silent upgrade over it (the DelTree regression guard: the
           #    second run must NOT delete the uninstaller it just wrote)
           Invoke-Setup $exe @("/VERYSILENT","/SUPPRESSMSGBOXES","/NOCANCEL","/NORESTART")
           if (-not (Test-Path $unins.FullName)) { throw "smoke: uninstaller deleted by upgrade — DelTree regression" }
-          $reg = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" -ErrorAction SilentlyContinue |
-                 Where-Object { $_.DisplayName -eq "Golden Music" }
-          if (-not $reg) { throw "smoke: uninstall registry entry missing" }
+          if (-not (Get-ItemProperty $iskey -ErrorAction SilentlyContinue)) { throw "smoke: uninstall registry entry missing" }
           # 3. silent uninstall — must leave no uninstall entry behind
           Invoke-Setup $unins.FullName @("/VERYSILENT","/SUPPRESSMSGBOXES","/NOCANCEL","/NORESTART")
-          $left = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" -ErrorAction SilentlyContinue |
-                  Where-Object { $_.DisplayName -eq "Golden Music" }
-          if ($left) { throw "smoke: uninstall registry entry still present" }
+          if (Get-ItemProperty $iskey -ErrorAction SilentlyContinue) { throw "smoke: uninstall registry entry still present" }
 
       - name: Extract release notes from CHANGELOG
         id: notes
