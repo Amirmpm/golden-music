@@ -55,7 +55,7 @@ SHA_NAME_TEMPLATE = INSTALLER_NAME_TEMPLATE + ".sha256"
 _PENDING_MARKER = "pending_update.json"
 _TIMEOUT_S = 15
 
-_TAG_RE = re.compile(r"^v?(\d+(?:\.\d+){0,2})$")
+_TAG_RE = re.compile(r"^[vV]?(\d+(?:\.\d+){0,2})$")
 _NUM_RE = re.compile(r"^\d+$")
 _INSTALLER_NAME_RE = re.compile(r"^GoldenMusicSetup-\d+\.\d+\.\d+\.exe$")
 
