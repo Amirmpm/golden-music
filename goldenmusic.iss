@@ -45,6 +45,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
+ChangesAssociations=yes
 UninstallDisplayIcon={app}\{#AppExeName}
 UninstallDisplayName={#AppDescription}
 SetupIconFile=assets\icon.ico
@@ -59,6 +60,63 @@ Name: "desktopicon"; Description: "Create a &desktop icon"; \
     GroupDescription: "Additional shortcuts:"; Flags: unchecked
 Name: "startup"; Description: "Start with Windows (optional)"; \
     GroupDescription: "Additional shortcuts:"; Flags: unchecked
+Name: "fileassoc"; Description: "Add Golden Music to 'Open with' for audio files"; \
+    GroupDescription: "Integration:"
+
+; "Open with" integration only — the user's default player is NEVER
+; changed silently; file types are associated exclusively through the
+; OpenWithProgids mechanism (adds an entry to the Open with menu).
+[Registry]
+; ProgID describing audio files opened with Golden Music
+Root: HKA; Subkey: "Software\Classes\GoldenMusic.AudioFile"; \
+    ValueType: string; ValueName: "FriendlyTypeName"; \
+    ValueData: "Audio file (Golden Music)"; Flags: uninsdeletekey; \
+    Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\GoldenMusic.AudioFile\DefaultIcon"; \
+    ValueType: string; ValueData: "{app}\assets\icon.ico"; \
+    Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\GoldenMusic.AudioFile\shell\open\command"; \
+    ValueType: string; ValueData: """{app}\{#AppExeName}"" ""%1"""; \
+    Flags: uninsdeletekey; Tasks: fileassoc
+; Make the exe appear in the Open with dialog for every supported type
+Root: HKA; Subkey: "Software\Classes\Applications\{#AppExeName}"; \
+    ValueType: string; ValueName: "FriendlyAppName"; ValueData: "{#AppName}"; \
+    Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\Applications\{#AppExeName}\shell\open\command"; \
+    ValueType: string; ValueData: """{app}\{#AppExeName}"" ""%1"""; \
+    Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\Applications\{#AppExeName}"; \
+    ValueType: string; ValueName: "SupportedTypes"; \
+    ValueData: ".mp3 .wav .flac .ogg .oga .opus .m4a .aac .wma"; \
+    Flags: uninsdeletevalue; Tasks: fileassoc
+; OpenWithProgids per extension — the safe, non-hijacking association
+Root: HKA; Subkey: "Software\Classes\.mp3\OpenWithProgids"; \
+    ValueType: string; ValueName: "GoldenMusic.AudioFile"; ValueData: ""; \
+    Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\.wav\OpenWithProgids"; \
+    ValueType: string; ValueName: "GoldenMusic.AudioFile"; ValueData: ""; \
+    Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\.flac\OpenWithProgids"; \
+    ValueType: string; ValueName: "GoldenMusic.AudioFile"; ValueData: ""; \
+    Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\.ogg\OpenWithProgids"; \
+    ValueType: string; ValueName: "GoldenMusic.AudioFile"; ValueData: ""; \
+    Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\.oga\OpenWithProgids"; \
+    ValueType: string; ValueName: "GoldenMusic.AudioFile"; ValueData: ""; \
+    Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\.opus\OpenWithProgids"; \
+    ValueType: string; ValueName: "GoldenMusic.AudioFile"; ValueData: ""; \
+    Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\.m4a\OpenWithProgids"; \
+    ValueType: string; ValueName: "GoldenMusic.AudioFile"; ValueData: ""; \
+    Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\.aac\OpenWithProgids"; \
+    ValueType: string; ValueName: "GoldenMusic.AudioFile"; ValueData: ""; \
+    Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\.wma\OpenWithProgids"; \
+    ValueType: string; ValueName: "GoldenMusic.AudioFile"; ValueData: ""; \
+    Flags: uninsdeletevalue; Tasks: fileassoc
 
 [Files]
 Source: "dist\GoldenMusic\*"; DestDir: "{app}"; \

@@ -67,6 +67,7 @@ from widgets import ClickableSlider
 from tray_menu import TrayMenuWidget
 from theme_picker import ThemePickerPopup
 import coverart
+import ipc
 from mediakeys import MediaKeyFilter
 
 try:
@@ -1685,8 +1686,10 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(860, 620)
         # Accept folder/file drops from the OS file manager
         self.setAcceptDrops(True)
-        # Publish window title for second-launch focus (single-instance)
-        self._publish_title_shm()
+        # Per-user single-instance IPC server ("Open with" forwards + show).
+        # Started here so it exists before the window is even visible.
+        self._ipc_server = ipc.start_server(
+            self.open_external_files, self._reveal_window)
 
         # State
         self.theme_name = Theme.DEFAULT_NAME
@@ -1877,24 +1880,27 @@ class MainWindow(QMainWindow):
             self._apply_theme()
             self._save_config()
 
-    def _publish_title_shm(self):
-        """Share our window title via QSharedMemory so a second launch can
-        find and raise this window."""
-        try:
-            from PyQt6.QtCore import QSharedMemory
-            # Keep a reference for the process lifetime — a parent-less local
-            # used to be garbage-collected the moment this function returned,
-            # destroying the segment and silently disabling the feature.
-            shm = QSharedMemory("GoldenMusic_WindowTitle")
-            # Leftover segment from a crashed run — clean it up
-            if shm.attach(QSharedMemory.AccessMode.ReadWrite):
-                shm.detach()
-            data = self.windowTitle().encode("utf-8") + b"\x00"
-            if shm.create(len(data)):
-                shm.data()[:len(data)] = data
-                self._title_shm = shm
-        except Exception as e:
-            log.debug(f"title shared memory unavailable: {e}")
+    def open_external_files(self, paths, reveal: bool = True) -> bool:
+        """Play files handed over by the OS ("Open with", double-click,
+        second-instance IPC) as an ad-hoc queue.
+
+        The queue lives only in current_playlist — this method never
+        mutates self.library / added_folders / favorites / playlists and
+        never writes the config (never-wipe guards): a one-off external
+        file must not leak into the persisted library.
+        Returns True when at least one valid file was queued.
+        """
+        files = ipc.sanitize_paths(paths if isinstance(paths, list) else [])
+        if not files:
+            if reveal:
+                # Nothing playable — still surface the running instance.
+                self._reveal_window()
+            return False
+        log.info(f"External open: queuing {len(files)} file(s)")
+        self._play_from_list(files, 0)
+        if reveal:
+            self._reveal_window()   # user just asked for this file by name
+        return True
 
     def _build_ui(self):
         root = QWidget()
@@ -5454,54 +5460,18 @@ def _acquire_single_instance_lock() -> bool:
         return True
 
 
-def _focus_existing_instance():
-    """Bring the already-running window to the foreground (no error shown)."""
-    log.info("Second launch detected — focusing existing instance")
+def _forward_to_running(files: list) -> bool:
+    """Hand a second launch over to the already-running instance.
+
+    Files (from "Open with") are forwarded as an open command; a bare
+    relaunch sends a show command so an instance hidden in the tray is
+    revealed. Returns True only when the running instance acknowledged.
+    """
+    log.info("Second launch detected — forwarding to the running instance")
     try:
-        from PyQt6.QtWidgets import QApplication
-        from PyQt6.QtCore import QSharedMemory
-        # Preferred path: running instance publishes its window title via
-        # shared memory so we can find and raise it.
-        shm = QSharedMemory("GoldenMusic_WindowTitle")
-        if shm.attach(QSharedMemory.AccessMode.ReadOnly) and shm.data() is not None:
-            raw = bytes(shm.data()[:shm.size()]).split(b"\x00", 1)[0]
-            title = raw.decode("utf-8", errors="replace")
-            shm.detach()
-            if title and _raise_window_by_title(title):
-                return
-        # Fallback: match by exact window title prefix
-        if _raise_window_by_title(APP_NAME):
-            return
-        log.warning("Existing instance found but its window could not be raised")
+        return ipc.forward_launch(files)
     except Exception as e:
-        log.warning(f"Could not focus existing instance: {e}")
-
-
-def _raise_window_by_title(title_substring: str) -> bool:
-    """Win32: find a visible top-level window whose title contains the
-    substring, restore it if minimized, and bring it to the foreground."""
-    try:
-        import win32gui
-        import win32con
-        found = []
-
-        def enum_handler(hwnd, _):
-            if not win32gui.IsWindowVisible(hwnd):
-                return
-            text = win32gui.GetWindowText(hwnd)
-            if title_substring in text:
-                found.append(hwnd)
-
-        win32gui.EnumWindows(enum_handler, None)
-        if not found:
-            return False
-        hwnd = found[0]
-        if win32gui.IsIconic(hwnd):  # minimized -> restore first
-            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-        win32gui.SetForegroundWindow(hwnd)
-        return True
-    except Exception as e:
-        log.warning(f"raise_window_by_title failed: {e}")
+        log.warning(f"Could not forward to running instance: {e}")
         return False
 
 
@@ -5604,6 +5574,13 @@ def _enable_windows_glass(widget):
         log.debug(f"glass backdrop unavailable: {e}")
 
 
+def _audio_files_from_argv(argv: list) -> list:
+    """Collect "Open with" file arguments: absolute, existing, audio
+    extensions only, deduplicated, bounded count (ipc.sanitize_paths
+    enforces the exact same rules as the IPC channel)."""
+    return ipc.sanitize_paths(list(argv)[:ipc.MAX_PATHS_PER_MESSAGE])
+
+
 def main():
     log_path = setup_logging()
     # Build smoke test: `GoldenMusic.exe --smoke` boots the real window,
@@ -5612,11 +5589,19 @@ def main():
     smoke = "--smoke" in sys.argv
     if smoke:
         sys.argv.remove("--smoke")
+    # "Open with" / file-association launches pass media files in argv.
+    argv_files = _audio_files_from_argv(sys.argv[1:])
     if sys.platform == 'win32' and not smoke:
-        # Single-instance: focus the running window instead of launching a copy
+        # Single-instance: forward to the running window instead of
+        # launching a copy (files are handed over too).
         if not _acquire_single_instance_lock():
-            _focus_existing_instance()
-            sys.exit(0)
+            if _forward_to_running(argv_files):
+                sys.exit(0)
+            # Mutex held but the socket is unreachable — stale lock from a
+            # crashed/killed run; start normally rather than dead-locking
+            # the user out of their player.
+            log.warning("single-instance lock held but IPC is unreachable "
+                        "— starting anyway")
     QApplication.setStyle(QStyleFactory.create("Fusion"))
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
@@ -5633,6 +5618,10 @@ def main():
     _enable_windows_glass(w)
     if QSystemTrayIcon.isSystemTrayAvailable():
         w.tray.show()
+    # Cold-start "Open with": give async init (config load, theme apply) a
+    # moment, then queue and play the handed-over files.
+    if argv_files and not smoke:
+        QTimer.singleShot(400, lambda: w.open_external_files(argv_files))
     if smoke:
         # Let pending async init (config load, theme apply) run, then quit
         # through the NORMAL close path: a bare app.quit() tears down the
