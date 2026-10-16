@@ -27,6 +27,8 @@ import re
 import time
 from pathlib import Path
 
+from config import restrict_file_permissions
+
 log = logging.getLogger("app.lyrics_cache")
 
 MAX_CACHE_FILES = 500
@@ -139,6 +141,7 @@ def save_cached(title: str, artist: str, duration_s, ly) -> bool:
         final = d / (_key(title, artist) + ".json")
         tmp.write_text(blob, encoding="utf-8")
         tmp.replace(final)   # atomic-ish
+        restrict_file_permissions(final)
         _prune(d)
         return True
     except Exception as e:

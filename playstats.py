@@ -18,6 +18,8 @@ import time
 from datetime import date
 from pathlib import Path
 
+from config import restrict_file_permissions
+
 log = logging.getLogger("app.stats")
 
 # Same hardening class as the config loader in config.py: a huge or tampered
@@ -213,6 +215,7 @@ class PlayStats:
             tmp.write_text(json.dumps(payload, ensure_ascii=False),
                            encoding="utf-8")
             tmp.replace(self.path)      # atomic-ish write
+            restrict_file_permissions(self.path)
             self._dirty = False
         except Exception as e:
             log.warning(f"stats save failed: {e}")
