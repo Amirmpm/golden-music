@@ -349,6 +349,6 @@ The first stable, production-ready version of Golden Music!
 
 <div align="center">
 
-**Golden Music v2.0.1** — Psychology Theme Suite 🎨
+**Golden Music v2.1.1** — Psychology Theme Suite 🎨
 
 </div>

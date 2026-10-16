@@ -14,6 +14,9 @@ import os
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from version import APP_VERSION  # noqa: E402
+
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -33,7 +36,7 @@ DEMO_TRACKS = [
 DEMO_LIBRARY = [f"C:/DemoMusic/{t.replace(' ', '_').lower()}.mp3"
                 for t, _ in DEMO_TRACKS]
 seed = {
-    "version": "2.1.1",
+    "version": APP_VERSION,
     "theme": "royal_gold",
     "library": DEMO_LIBRARY,
     "favorites": DEMO_LIBRARY[:3],

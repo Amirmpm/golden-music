@@ -32,7 +32,9 @@ except ImportError:
     HAVE_QT_AUDIO = False
 
 APP_NAME = "Golden Music"
-APP_VERSION = "2.1.1"
+# Single source of truth lives in version.py — re-exported here for
+# backward compatibility with every module that imports APP_VERSION.
+from version import APP_VERSION  # noqa: E402  (kept after APP_NAME for grep-ability)
 ORG_NAME = "GoldenMusic"
 
 # Audio extensions

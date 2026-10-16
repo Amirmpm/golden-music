@@ -1,6 +1,7 @@
 ; Golden Music — Windows installer script (Inno Setup 6)
-; Build:  iscc goldenmusic.iss
-; Output: dist/installer/GoldenMusicSetup-2.1.1.exe
+; Build:  iscc goldenmusic.iss            (uses the default AppVersion below)
+;         iscc /DAppVersion=x.y.z goldenmusic.iss   (CI — must match version.py)
+; Output: dist/installer/GoldenMusicSetup-<version>.exe
 ;
 ; Update behavior:
 ;   - AppId is the SAME as v1.0.0, so Windows/Inno treat this as an UPDATE
@@ -10,7 +11,12 @@
 ;     first-time install (per-user, no admin required).
 
 #define AppName        "Golden Music"
+; AppVersion default — CI passes /DAppVersion= from version.py; when building
+; by hand this default must match version.py (scripts/test_version_sync.py
+; asserts the agreement, so a drift breaks CI instead of shipping).
+#ifndef AppVersion
 #define AppVersion     "2.1.1"
+#endif
 #define AppPublisher   "Golden Music"
 #define AppExeName     "GoldenMusic.exe"
 #define AppDescription "Golden Music Player"
@@ -31,7 +37,7 @@ DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 DisableWelcomePage=no
 OutputDir=dist\installer
-OutputBaseFilename=GoldenMusicSetup-2.1.1
+OutputBaseFilename=GoldenMusicSetup-{#AppVersion}
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
@@ -45,6 +51,11 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
+; Same mutex name as main.pyw's CreateMutex — lets the installer detect a
+; running app on upgrade instead of failing or demanding a reboot.
+AppMutex=GoldenMusic_SingleInstance_Mutex
+; Offer to close the running app during install/uninstall (uses AppMutex).
+CloseApplications=yes
 ChangesAssociations=yes
 UninstallDisplayIcon={app}\{#AppExeName}
 UninstallDisplayName={#AppDescription}
@@ -171,11 +182,34 @@ begin
     Result := RemoveBackslashUnlessRoot(D);
 end;
 
+var
+  // Set in InitializeSetup (BEFORE anything is changed) and consumed in
+  // CurStepChanged — true only when a real v1.0.0 legacy install exists.
+  LegacyExists: Boolean;
+  LegacyDir: String;
+
+function GetLegacyInstallDir(): String;
+var
+  D: String;
+begin
+  Result := '';
+  if RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\' + LegacyKey,
+      'InstallLocation', D) or
+     RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\' + LegacyKey,
+      'Inno Setup: App Path', D) then
+    Result := RemoveBackslashUnlessRoot(D);
+end;
+
 function InitializeSetup(): Boolean;
 var
   OldVersion, Msg: String;
 begin
   Result := True;
+
+  // Snapshot the legacy state NOW — before this run can modify anything.
+  LegacyExists := RegKeyExists(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\' + LegacyKey);
+  if LegacyExists then
+    LegacyDir := GetLegacyInstallDir();
 
   OldVersion := GetInstalledVersion();
   // Ask only in interactive mode — /SILENT and /VERYSILENT skip the prompt
@@ -211,28 +245,32 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   LegacyUninst: String;
-  InstallDir: String;
 begin
   if CurStep = ssPostInstall then
   begin
     // Migration cleanup: v1.0.0's uninstaller entry used the malformed GUID.
     // Remove that stale entry so Windows shows only ONE installed app.
-    InstallDir := GetExistingInstallDir();
-    if RegKeyExists(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\' + LegacyKey) then
+    if LegacyExists then
     begin
       RegDeleteKeyIncludingSubkeys(HKCU,
         'Software\Microsoft\Windows\CurrentVersion\Uninstall\' + LegacyKey);
       Log('Migrated legacy uninstall key');
     end;
 
-    // If the legacy folder has an old unins000.exe pointing elsewhere but we
-    // just updated IN that folder, its files were replaced by ours anyway.
-    // The stale uninstaller binary is removed to avoid double-uninstall paths.
-    if InstallDir <> '' then
+    // Delete the LEGACY uninstaller only when the legacy record really
+    // existed AND it points somewhere else than {app}. The previous code
+    // ran on EVERY install where unins000.exe was next to the recorded
+    // dir — including a normal update-in-place, where it would delete the
+    // uninstaller Inno just wrote for THIS install.
+    if LegacyExists and (LegacyDir <> '') and
+       (CompareText(LegacyDir, ExpandConstant('{app}')) <> 0) then
     begin
-      LegacyUninst := AddBackslash(InstallDir) + 'unins000.exe';
+      LegacyUninst := AddBackslash(LegacyDir) + 'unins000.exe';
       if FileExists(LegacyUninst) then
+      begin
         DelTree(ExtractFilePath(LegacyUninst) + 'unins*', True, True, False);
+        Log('Removed stale legacy uninstaller files in ' + LegacyDir);
+      end;
     end;
   end;
 end;

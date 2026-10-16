@@ -13,7 +13,7 @@
 [![PyQt6](https://img.shields.io/badge/PyQt6-6.11+-41CD52?style=for-the-badge&logo=qt&logoColor=white)](https://www.riverbankcomputing.com/software/pyqt/)
 [![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white)](#)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
-[![CI](https://img.shields.io/badge/CI-passing-success?style=for-the-badge)](.github/workflows/ci.yml)
+[![CI](https://github.com/Amirmpm/golden-music/actions/workflows/ci.yml/badge.svg)](https://github.com/Amirmpm/golden-music/actions/workflows/ci.yml)
 [![Stars](https://img.shields.io/github/stars/Amirmpm/golden-music?style=for-the-badge)](../../stargazers)
 
 </div>
@@ -144,7 +144,8 @@ the window to the tray instead of minimizing (Settings → Interface).
 
 ### 🛡️ Reliability by design
 
-- **Single-instance** — relaunching focuses the running window
+- **Single-instance** — relaunching reveals the running window (even when it's hidden in the tray) and hands over any files the OS asked it to open
+- **"Open with" integration** — installer can register the player in Explorer's Open-with menu; opened files play as an ad-hoc queue
 - **Crash guard** — unexpected exceptions are logged, the app keeps running
 - **Rotating file log** at `~/.goldenmusic/goldenmusic.log`
 - **Validated config loading** — corrupted settings never crash startup
