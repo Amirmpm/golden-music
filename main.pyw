@@ -42,7 +42,7 @@ from PyQt6.QtWidgets import (
     QSystemTrayIcon, QMenu, QFileDialog, QMessageBox,
     QStyle, QStyleFactory, QAbstractItemView,
     QToolButton, QButtonGroup, QProgressBar, QLineEdit, QComboBox,
-    QSplitter, QTreeWidget, QTreeWidgetItem
+    QSplitter, QTreeWidget, QTreeWidgetItem, QTextEdit, QPlainTextEdit
 )
 from PyQt6.QtGui import (
     QIcon, QPixmap, QPainter, QColor, QFont, QPalette, QAction,
@@ -2558,35 +2558,56 @@ class MainWindow(QMainWindow):
         self.tray.activated.connect(self._on_tray_activated)
 
     def _setup_shortcuts(self):
-        # Space / Enter: play-pause
-        QShortcut(QKeySequence(Qt.Key.Key_Space), self, activated=self._on_play_pause)
-        QShortcut(QKeySequence(Qt.Key.Key_Return), self, activated=self._on_play_pause)
-        QShortcut(QKeySequence(Qt.Key.Key_Enter), self, activated=self._on_play_pause)
-        # Left/Right arrows: previous / next track
-        QShortcut(QKeySequence(Qt.Key.Key_Left), self, activated=self._on_prev)
-        QShortcut(QKeySequence(Qt.Key.Key_Right), self, activated=self._on_next)
-        # Up/Down arrows: volume — but let the focused list consume them for
-        # row navigation first (context Qt.WindowShortcut fires after the
-        # widget's own handling only when the list does not accept the key).
-        up = QShortcut(QKeySequence(Qt.Key.Key_Up), self)
-        up.setContext(Qt.ShortcutContext.WindowShortcut)
-        up.activated.connect(self._on_arrow_up)
-        down = QShortcut(QKeySequence(Qt.Key.Key_Down), self)
-        down.setContext(Qt.ShortcutContext.WindowShortcut)
-        down.activated.connect(self._on_arrow_down)
-        # M: mute toggle
-        QShortcut(QKeySequence(Qt.Key.Key_M), self, activated=self._on_mute_toggle)
-        # F11 / F: fullscreen player
-        QShortcut(QKeySequence(Qt.Key.Key_F11), self, activated=self._toggle_fullscreen_player)
-        QShortcut(QKeySequence(Qt.Key.Key_F), self, activated=self._toggle_fullscreen_player)
-        # Ctrl+F: focus search (plain F is fullscreen, so search keeps Ctrl)
+        # README-documented bindings (always active, no conflicts):
+        #   Ctrl+F search · Ctrl+M mini player · Ctrl+J jump to playing
+        #   F11/F fullscreen · Esc leave fullscreen
+        #   Ctrl+arrows: prev/next track · volume up/down
         QShortcut(QKeySequence("Ctrl+F"), self, activated=lambda: self.search_edit.setFocus())
-        # Ctrl+M: mini player
         QShortcut(QKeySequence("Ctrl+M"), self, activated=self._toggle_mini_player)
-        # Ctrl+J: jump to playing track
         QShortcut(QKeySequence("Ctrl+J"), self, activated=self._jump_to_playing)
-        # Escape: leave the fullscreen player
+        QShortcut(QKeySequence("Ctrl+Left"), self, activated=self._on_prev)
+        QShortcut(QKeySequence("Ctrl+Right"), self, activated=self._on_next)
+        QShortcut(QKeySequence("Ctrl+Up"), self, activated=lambda: self._change_volume(5))
+        QShortcut(QKeySequence("Ctrl+Down"), self, activated=lambda: self._change_volume(-5))
+        QShortcut(QKeySequence(Qt.Key.Key_F11), self, activated=self._toggle_fullscreen_player)
         QShortcut(QKeySequence(Qt.Key.Key_Escape), self, activated=self._exit_fullscreen_player)
+        # Bare convenience keys (Space, Enter, plain arrows, M, F) are
+        # dispatched in keyPressEvent() ONLY when no widget consumed them —
+        # a window-wide QShortcut for bare keys used to hijack typing in the
+        # search box and type-ahead/navigation in lists (pressing F with a
+        # list focused opened the fullscreen player).
+
+    def keyPressEvent(self, e):
+        """Focus-aware fallback for the bare convenience keys.
+
+        Runs only when no child widget accepted the key event. If focus is
+        on a widget that meaningfully owns keys (item views with their
+        type-ahead/navigation, sliders, text inputs, combos) the leftover
+        key is dropped so nothing is stolen; on neutral focus the player
+        shortcuts apply.
+        """
+        fw = QApplication.focusWidget()
+        if isinstance(fw, (QAbstractItemView, QSlider, QLineEdit,
+                           QTextEdit, QPlainTextEdit, QComboBox)):
+            super().keyPressEvent(e)   # the widget already had its chance
+            return
+        k = e.key()
+        if k in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self._on_play_pause()
+        elif k == Qt.Key.Key_Left:
+            self._on_prev()
+        elif k == Qt.Key.Key_Right:
+            self._on_next()
+        elif k == Qt.Key.Key_Up:
+            self._change_volume(5)
+        elif k == Qt.Key.Key_Down:
+            self._change_volume(-5)
+        elif k == Qt.Key.Key_M:
+            self._on_mute_toggle()
+        elif k == Qt.Key.Key_F:
+            self._toggle_fullscreen_player()
+        else:
+            super().keyPressEvent(e)
 
     # ------------------------------------------------------------------
     # Fullscreen player (F11 / F to toggle, Esc to exit)
@@ -2610,33 +2631,6 @@ class MainWindow(QMainWindow):
         fs = getattr(self, "_fullscreen_player", None)
         if fs is not None and fs.isVisible():
             fs.close()
-
-    def _on_arrow_up(self):
-        """Up arrow: move the list selection when a list owns focus,
-        otherwise raise the volume."""
-        lst = self._focused_track_list()
-        if lst is not None:
-            row = max(0, lst.currentRow() - 1)
-            lst.setCurrentRow(row)
-            return
-        self._change_volume(5)
-
-    def _on_arrow_down(self):
-        """Down arrow: move the list selection when a list owns focus,
-        otherwise lower the volume."""
-        lst = self._focused_track_list()
-        if lst is not None:
-            row = min(lst.count() - 1, lst.currentRow() + 1)
-            lst.setCurrentRow(row)
-            return
-        self._change_volume(-5)
-
-    def _focused_track_list(self):
-        """The track list currently holding keyboard focus, if any."""
-        fw = QApplication.focusWidget()
-        if fw in (self.library_list, self.favorites_list):
-            return fw
-        return None
 
     def _change_volume(self, delta):
         v = self.player_bar.vol_slider.value() + delta
