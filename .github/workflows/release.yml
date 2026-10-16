@@ -29,11 +29,12 @@ jobs:
         id: ver
         shell: python
         run: |
-          import re, pathlib
+          import os, re, pathlib
           v = re.search(r'APP_VERSION\s*=\s*"([^"]+)"',
                         pathlib.Path("version.py").read_text(encoding="utf-8")).group(1)
           tag = "${{ github.ref_name }}"
-          print(f"::set-output name=version::{v}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"version={v}\n")
           if "${{ github.event_name }}" == "push":
               assert tag == f"v{v}", f"tag {tag} != version.py v{v} — aborting"
           print(f"version={v} tag={tag}")
@@ -105,14 +106,15 @@ jobs:
         id: notes
         shell: python
         run: |
-          import pathlib, re
+          import os, pathlib, re
           v = "${{ steps.ver.outputs.version }}"
           text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
           m = re.search(rf"^## \[{re.escape(v)}\].*?\n(.*?)(?=^## \[|\Z)", text,
                         re.M | re.S)
           body = m.group(1).strip() if m else f"Golden Music v{v}"
           pathlib.Path("release_notes.md").write_text(body, encoding="utf-8")
-          print(f"::set-output name=found::{bool(m)}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"found={bool(m)}\n")
 
       - name: Create GitHub release (tag pushes only)
         if: github.event_name == 'push'
