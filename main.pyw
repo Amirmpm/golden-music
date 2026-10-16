@@ -42,7 +42,8 @@ from PyQt6.QtWidgets import (
     QSystemTrayIcon, QMenu, QFileDialog, QMessageBox,
     QStyle, QStyleFactory, QAbstractItemView,
     QToolButton, QButtonGroup, QProgressBar, QLineEdit, QComboBox,
-    QSplitter, QTreeWidget, QTreeWidgetItem, QTextEdit, QPlainTextEdit
+    QSplitter, QTreeWidget, QTreeWidgetItem, QTextEdit, QPlainTextEdit,
+    QGraphicsOpacityEffect
 )
 from PyQt6.QtGui import (
     QIcon, QPixmap, QPainter, QColor, QFont, QPalette, QAction,
@@ -3196,9 +3197,7 @@ class MainWindow(QMainWindow):
                 msg.append(f"Added {added} new track(s)")
             if removed:
                 msg.append(f"Removed {removed} missing track(s)")
-            if self.tray and self.tray.isVisible() and not self.isActiveWindow():
-                self.tray.showMessage(APP_NAME, " · ".join(msg) + f" (total: {len(self.library)})",
-                    QSystemTrayIcon.MessageIcon.Information, 2000)
+            self._show_toast(" · ".join(msg) + f" (total: {len(self.library)})")
         if self._scan_results_pending is not None:
             nxt = self._scan_results_pending
             self._scan_results_pending = None
@@ -3523,10 +3522,8 @@ class MainWindow(QMainWindow):
         added = [p for p in tracks if p not in existing]
         self.current_playlist.extend(added)
         self.shuffle_unplayed.update(added)
-        if self.tray and self.tray.isVisible():
-            self.tray.showMessage(APP_NAME,
-                f"Queued {len(added)} track(s) from {os.path.basename(folder)}",
-                QSystemTrayIcon.MessageIcon.Information, 2000)
+        self._show_toast(
+            f"Queued {len(added)} track(s) from {os.path.basename(folder)}")
 
     def _folder_to_playlist(self, folder: str):
         """Create/extend a personal playlist with every track of the folder."""
@@ -3607,9 +3604,7 @@ class MainWindow(QMainWindow):
         self._rebuild_folder_tree()
         self._update_count_label()
         self._save_config()
-        if self.tray and self.tray.isVisible():
-            self.tray.showMessage(APP_NAME, f"Removed '{name}' from library",
-                QSystemTrayIcon.MessageIcon.Information, 2000)
+        self._show_toast(f"Removed '{name}' from library")
 
     def _delete_folder_from_disk(self, folder: str):
         """Permanently delete a folder's audio files from disk (2-step confirm).
@@ -3657,10 +3652,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, APP_NAME,
                 f"Deleted {deleted} file(s); some could not be deleted:\n\n" +
                 "\n".join(errors[:8]))
-        elif self.tray and self.tray.isVisible():
-            self.tray.showMessage(APP_NAME,
-                f"Deleted '{name}' ({deleted} files) from disk",
-                QSystemTrayIcon.MessageIcon.Information, 2500)
+        elif self.isVisible():
+            self._show_toast(
+                f"Deleted '{name}' ({deleted} files) from disk")
 
     def _remove_folder_from_library_quiet(self, folder: str):
         """Library bookkeeping for _delete_folder_from_disk (no prompts)."""
@@ -3893,8 +3887,7 @@ class MainWindow(QMainWindow):
                                 break
                     except Exception:
                         pass
-                self.tray.showMessage(APP_NAME, f"Audio output: {label}",
-                    QSystemTrayIcon.MessageIcon.Information, 1500)
+                self._show_toast(f"Audio output: {label}")
         except Exception as e:
             log.warning(f"audio output switch failed: {e}")
         self._save_config_debounced()
@@ -3975,9 +3968,7 @@ class MainWindow(QMainWindow):
             # Finally remove the physical file
             os.remove(path)
             log.info(f"Deleted file from disk: {path}")
-            if self.tray and self.tray.isVisible():
-                self.tray.showMessage(APP_NAME, f"Deleted {title}",
-                    QSystemTrayIcon.MessageIcon.Information, 2000)
+            self._show_toast(f"Deleted {title}")
         except FileNotFoundError:
             QMessageBox.warning(self, APP_NAME, "File was already gone.")
         except OSError as e:
@@ -4256,12 +4247,120 @@ class MainWindow(QMainWindow):
             self.stats.save()
 
     # ------------------------------------------------------------------
-    # Track-change toast (only while the main window is hidden)
+    # In-app toast notifications (replace tray balloons — no spam, no
+    # focus stealing, theme-aware)
+    # ------------------------------------------------------------------
+    _TOAST_MS = 3200
+
+    def _ensure_toast_widget(self):
+        if getattr(self, "_toast_label", None) is None:
+            lbl = QLabel(self)
+            lbl.setObjectName("AppToast")
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setWordWrap(True)
+            lbl.setMaximumWidth(560)
+            lbl.setVisible(False)
+            self._toast_label = lbl
+            self._toast_effect = QGraphicsOpacityEffect(lbl)
+            self._toast_effect.setOpacity(0.0)
+            lbl.setGraphicsEffect(self._toast_effect)
+            self._toast_anim = QVariantAnimation(self)
+            self._toast_anim.setDuration(180)
+            self._toast_anim.valueChanged.connect(
+                self._toast_effect.setOpacity)
+            self._toast_timer = QTimer(self)
+            self._toast_timer.setSingleShot(True)
+            self._toast_timer.timeout.connect(self._fade_out_toast)
+        return self._toast_label
+
+    def _show_toast(self, text: str, error: bool = False,
+                    ms: int = _TOAST_MS):
+        """Bottom-center in-app toast pill.
+
+        Replaces tray balloons for all operational notifications. No-op
+        (log only) while the window is hidden — an in-app toast would be
+        invisible anyway and balloons were dropped to stop the spam.
+        Honors the toast_enabled setting.
+        """
+        if not getattr(self, "_toast_enabled", True):
+            return
+        if not self.isVisible():
+            log.info(f"toast suppressed (window hidden): {text}")
+            return
+        try:
+            lbl = self._ensure_toast_widget()
+            t = self.theme
+            border = t.get("danger", "#a33") if error else t.get("border", "#555")
+            lbl.setStyleSheet(
+                f"QLabel#AppToast {{ background: {t.get('panel_bg', '#222')};"
+                f" color: {t.get('text', '#eee')}; border: 1px solid {border};"
+                f" border-radius: 10px; padding: 8px 14px; font-size: 12px; }}")
+            lbl.setText(text)
+            lbl.adjustSize()
+            self._position_toast()
+            self._toast_anim.stop()
+            self._toast_anim.setStartValue(0.0)
+            self._toast_anim.setEndValue(1.0)
+            self._toast_effect.setOpacity(0.0)
+            lbl.show()
+            lbl.raise_()
+            self._toast_anim.start()
+            self._toast_timer.start(ms)
+        except Exception as e:
+            log.debug(f"toast error: {e}")
+
+    def _fade_out_toast(self):
+        try:
+            anim = self._toast_anim
+            anim.stop()
+            try:
+                anim.finished.disconnect()
+            except TypeError:
+                pass   # no handlers connected
+            anim.setStartValue(1.0)
+            anim.setEndValue(0.0)
+            anim.finished.connect(self._finish_toast_hide)
+            anim.start()
+        except Exception:
+            self._finish_toast_hide()
+
+    def _finish_toast_hide(self):
+        try:
+            self._toast_label.hide()
+        except Exception:
+            pass
+
+    def _position_toast(self):
+        """Center the toast above the player bar."""
+        lbl = getattr(self, "_toast_label", None)
+        if lbl is None:
+            return
+        bottom = self.height() - 96          # fallback: above the bottom edge
+        pb = getattr(self, "player_bar", None)
+        if pb is not None:
+            bottom = pb.geometry().top() - 12
+        x = max(8, (self.width() - lbl.width()) // 2)
+        y = max(8, bottom - lbl.height())
+        lbl.move(x, y)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if getattr(self, "_toast_label", None) is not None and \
+                self._toast_label.isVisible():
+            self._position_toast()
+
+    # Track-change toast (in-app only)
     # ------------------------------------------------------------------
     _TOAST_COOLDOWN_S = 4
 
     def _maybe_toast_track_change(self):
-        if not self.current_track or self.isVisible():
+        """Gentle 'now playing' feedback while the window is visible.
+
+        The old tray balloon variant targeted the hidden window; balloons
+        are gone now, and an in-app toast would be invisible while hidden,
+        so hidden changes are logged only.
+        """
+        if not self.current_track or not self.isVisible():
             self._last_toast_key = None
             return
         key = (self.current_track,
@@ -4273,16 +4372,14 @@ class MainWindow(QMainWindow):
             return
         self._last_toast_key = key
         self._last_toast_ts = now
-        if self.tray and self.tray.isVisible():
-            title, artist = self._tag_cache.get(
-                self.current_track, ("", ""))
-            if not title:
-                # Never run mutagen on the UI thread for a toast — fall back
-                # to the filename stem instead.
-                title = os.path.splitext(os.path.basename(self.current_track))[0]
-            body = f"{title} — {artist}" if artist else title
-            self.tray.showMessage(APP_NAME, f"♪ {body}",
-                QSystemTrayIcon.MessageIcon.Information, 2500)
+        title, artist = self._tag_cache.get(
+            self.current_track, ("", ""))
+        if not title:
+            # Never run mutagen on the UI thread for a toast — fall back
+            # to the filename stem instead.
+            title = os.path.splitext(os.path.basename(self.current_track))[0]
+        body = f"{title} — {artist}" if artist else title
+        self._show_toast(f"♪ {body}")
 
     def _on_media_loaded(self):
         """Deprecated — kept for compatibility."""
@@ -4775,8 +4872,8 @@ class MainWindow(QMainWindow):
         # track: finalize its (uncounted) listen credit, then auto-skip to
         # the next track (guarding against a playlist full of bad files by
         # capping consecutive skips).
-        if self.tray and self.tray.isVisible():
-            self.tray.showMessage(APP_NAME, f"Audio: {msg}", QSystemTrayIcon.MessageIcon.Warning, 3000)
+        self._show_toast(f"Audio: {msg}", error=True, ms=4000)
+        log.warning(f"audio error: {msg}")
         try:
             bad = self.current_track
             if bad:
@@ -4824,9 +4921,7 @@ class MainWindow(QMainWindow):
             self._sleep_timer.setSingleShot(True)
             self._sleep_timer.timeout.connect(self._on_sleep_timer_done)
         self._sleep_timer.start(minutes * 60 * 1000)
-        if self.tray and self.tray.isVisible():
-            self.tray.showMessage(APP_NAME, f"Sleep timer: will stop in {minutes} min",
-                QSystemTrayIcon.MessageIcon.Information, 2000)
+        self._show_toast(f"Sleep timer: will stop in {minutes} min")
 
     def stop_sleep_timer(self):
         self.sleep_timer_active = False
@@ -4837,8 +4932,7 @@ class MainWindow(QMainWindow):
         self.sleep_timer_active = False
         self.audio.stop()
         self.player_bar.update_play_button(False)
-        if self.tray and self.tray.isVisible():
-            self.tray.showMessage(APP_NAME, "Sleep timer: playback stopped", QSystemTrayIcon.MessageIcon.Information, 3000)
+        self._show_toast("Sleep timer: playback stopped")
 
     def _on_tray_activated(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
@@ -5001,11 +5095,9 @@ class MainWindow(QMainWindow):
         if self.windowState() & Qt.WindowState.WindowMinimized:
             self.hide()
             self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
-            if self.tray and getattr(self, "_tray_minimize_notice_shown", True):
-                self._tray_minimize_notice_shown = False   # tell once per session
-                self.tray.showMessage(APP_NAME,
-                    f"{APP_NAME} keeps playing in the tray.",
-                    QSystemTrayIcon.MessageIcon.Information, 2000)
+            # No balloon here — the once-ever persisted close-to-tray notice
+            # below is the single educational popup; repeated balloons were
+            # notification spam (and invisible anyway once hidden).
 
     def closeEvent(self, e):
         if self._force_quit:
@@ -5035,9 +5127,16 @@ class MainWindow(QMainWindow):
         else:
             e.ignore()
             self.hide()
-            if self.tray:
-                self.tray.showMessage(APP_NAME, f"{APP_NAME} is running in the tray.",
-                    QSystemTrayIcon.MessageIcon.Information, 2500)
+            # Educational notice — shown ONCE EVER (persisted in config):
+            # users must learn that closing keeps the app running. Every
+            # subsequent close-to-tray is silent.
+            if self.tray and not bool(getattr(self, "tray_notice_shown", False)):
+                self.tray_notice_shown = True
+                self._save_config()   # persist immediately — a quit may follow
+                self.tray.showMessage(APP_NAME,
+                    f"{APP_NAME} keeps running in the tray. "
+                    "Right-click the tray icon to quit.",
+                    QSystemTrayIcon.MessageIcon.Information, 4000)
 
     def _quit(self):
         self._force_quit = True
@@ -5126,6 +5225,7 @@ class MainWindow(QMainWindow):
             "audio_output_id": str(getattr(self, "audio_output_id", "") or ""),
             "auto_theme": bool(getattr(self, "auto_theme_enabled", False)),
             "toast_enabled": bool(getattr(self, "_toast_enabled", True)),
+            "tray_notice_shown": bool(getattr(self, "tray_notice_shown", False)),
             "visualizer_enabled": bool(getattr(self, "visualizer_enabled", True)),
             "default_volume": self._validated_int(getattr(self, "_last_volume", 80), 80, 0, 100),
             "fade_enabled": bool(getattr(self.fx, "enabled_fade", True)) if getattr(self, "fx", None) else True,
@@ -5171,6 +5271,7 @@ class MainWindow(QMainWindow):
         self.auto_rescan = cfg.get("auto_rescan", True)
         self.remember_track = cfg.get("remember_track", True)
         self.taskbar_close_to_tray = bool(cfg.get("taskbar_close_to_tray", False))
+        self.tray_notice_shown = bool(cfg.get("tray_notice_shown", False))
         self.default_folder = cfg.get("default_folder", "")
         self.sleep_timer_active = cfg.get("sleep_timer_active", False)
         self.sleep_timer_minutes = cfg.get("sleep_timer_minutes", 30)
@@ -5285,6 +5386,7 @@ class MainWindow(QMainWindow):
         self.auto_rescan = cfg.get("auto_rescan", True)
         self.remember_track = cfg.get("remember_track", True)
         self.taskbar_close_to_tray = bool(cfg.get("taskbar_close_to_tray", False))
+        self.tray_notice_shown = bool(cfg.get("tray_notice_shown", False))
         self.default_folder = cfg.get("default_folder", "")
         sm = cfg.get("sort_mode", "title")
         try:
