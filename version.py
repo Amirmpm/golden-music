@@ -7,4 +7,4 @@ and injected into the Inno Setup installer via /DAppVersion= in CI
 (goldenmusic.iss falls back to the matching default when built by hand).
 """
 
-APP_VERSION = "2.1.1"
+APP_VERSION = "2.2.0"

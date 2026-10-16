@@ -8,7 +8,7 @@
 
 *12 psychology-driven themes · Smart shuffle · Glass tray popup · Zero clutter*
 
-[![Version](https://img.shields.io/badge/Version-2.1.1-brightgreen?style=for-the-badge)](../../releases)
+[![Version](https://img.shields.io/badge/Version-2.2.0-brightgreen?style=for-the-badge)](../../releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![PyQt6](https://img.shields.io/badge/PyQt6-6.11+-41CD52?style=for-the-badge&logo=qt&logoColor=white)](https://www.riverbankcomputing.com/software/pyqt/)
 [![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white)](#)
@@ -144,6 +144,7 @@ the window to the tray instead of minimizing (Settings → Interface).
 
 ### 🛡️ Reliability by design
 
+- **Auto-update** — checks GitHub Releases once a day in the background; SHA-256-verified installers, non-intrusive in-app banner, self-update for installed editions (portable/source get a release-page link). Toggle or trigger manually in Settings → About
 - **Single-instance** — relaunching reveals the running window (even when it's hidden in the tray) and hands over any files the OS asked it to open
 - **"Open with" integration** — installer can register the player in Explorer's Open-with menu; opened files play as an ad-hoc queue
 - **Crash guard** — unexpected exceptions are logged, the app keeps running
@@ -157,14 +158,18 @@ the window to the tray instead of minimizing (Settings → Interface).
 
 | Shortcut | Action |
 |----------|--------|
-| `Space` | Play / Pause |
+| `Space` / `Enter` | Play / Pause (only when no list/input has focus) |
 | `Ctrl + ←` | Previous track |
 | `Ctrl + →` | Next track |
 | `Ctrl + ↑` | Volume Up |
 | `Ctrl + ↓` | Volume Down |
+| `←` / `→` (neutral focus) | Previous / Next track |
+| `↑` / `↓` (neutral focus) | Volume Up / Down |
 | `Ctrl + F` | Focus search bar |
 | `Ctrl + M` | Toggle Mini Player |
 | `Ctrl + J` | Jump to the playing track |
+| `F11` / `F` | Fullscreen player (Esc leaves) |
+| `Esc` | Leave the fullscreen player |
 
 *Media keys (Play/Pause/Stop/Next/Prev) on your keyboard or headset work globally.*
 
@@ -175,7 +180,7 @@ the window to the tray instead of minimizing (Settings → Interface).
 ### Option 1: Download Installer (Recommended)
 
 1. Go to [Releases](../../releases)
-2. Download `GoldenMusicSetup-2.1.1.exe`
+2. Download `GoldenMusicSetup-2.2.0.exe`
 3. Run the installer — it detects an existing installation and updates in place; your library, favorites and settings are preserved
 4. Enjoy your music! 🎉
 
@@ -212,7 +217,7 @@ build_windows.bat
 
 Output:
 - `dist\GoldenMusic\GoldenMusic.exe` — The app (portable folder)
-- `dist\installer\GoldenMusicSetup-2.1.1.exe` — The installer
+- `dist\installer\GoldenMusicSetup-2.2.0.exe` — The installer
 
 ---
 

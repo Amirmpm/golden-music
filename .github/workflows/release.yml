@@ -1,0 +1,138 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:        # dry run — builds everything, publishes nothing
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pywin32
+
+      - name: Determine version
+        id: ver
+        shell: python
+        run: |
+          import re, pathlib
+          v = re.search(r'APP_VERSION\s*=\s*"([^"]+)"',
+                        pathlib.Path("version.py").read_text(encoding="utf-8")).group(1)
+          tag = "${{ github.ref_name }}"
+          print(f"::set-output name=version::{v}")
+          if "${{ github.event_name }}" == "push":
+              assert tag == f"v{v}", f"tag {tag} != version.py v{v} — aborting"
+          print(f"version={v} tag={tag}")
+
+      - name: Run test suites (offscreen Qt)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          foreach ($t in @('test_functional','test_deep','test_stability','test_stability_v2','test_history_nav','test_features','test_crash','test_tray_toggle','test_open_with','test_shortcuts','test_updater','test_version_sync')) {
+            Write-Host "::group::=== $t ==="
+            python "scripts/$t.py"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Write-Host "::endgroup::"
+          }
+
+      - name: Security scan (Bandit)
+        run: |
+          pip install bandit
+          bandit -r . -q --exclude "./.git,./build,./dist,./screenshots,./scripts,./assets" --severity-level medium
+
+      - name: Build exe (PyInstaller + trim)
+        run: python build_release.py
+
+      - name: Build installer (Inno Setup, version injected)
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2
+        with:
+          path: goldenmusic.iss
+          options: /DAppVersion=${{ steps.ver.outputs.version }}
+
+      - name: Zip portable edition
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist/GoldenMusic/*" `
+            -DestinationPath "dist/installer/GoldenMusic-${{ steps.ver.outputs.version }}-portable.zip"
+
+      - name: SHA-256 checksum for the installer
+        shell: pwsh
+        run: |
+          $exe = "dist/installer/GoldenMusicSetup-${{ steps.ver.outputs.version }}.exe"
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  GoldenMusicSetup-${{ steps.ver.outputs.version }}.exe" |
+            Out-File -Encoding ascii "$exe.sha256"
+          Get-Content "$exe.sha256"
+
+      - name: Installer smoke test (silent install -> upgrade -> uninstall)
+        shell: pwsh
+        run: |
+          $exe = "dist/installer/GoldenMusicSetup-${{ steps.ver.outputs.version }}.exe"
+          # 1. silent first install
+          Start-Process -FilePath $exe -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NOCANCEL","/NORESTART" -Wait
+          $unins = Get-ChildItem "$env:LOCALAPPDATA\Programs\GoldenMusic\unins000.exe" -ErrorAction SilentlyContinue
+          if (-not $unins) { $unins = Get-ChildItem "$env:ProgramFiles\GoldenMusic\unins000.exe" -ErrorAction SilentlyContinue }
+          if (-not $unins) { throw "smoke: unins000.exe missing after install" }
+          # 2. silent upgrade over it (the DelTree regression guard: the
+          #    second run must NOT delete the uninstaller it just wrote)
+          Start-Process -FilePath $exe -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NOCANCEL","/NORESTART" -Wait
+          if (-not (Test-Path $unins.FullName)) { throw "smoke: uninstaller deleted by upgrade — DelTree regression" }
+          $reg = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" -ErrorAction SilentlyContinue |
+                 Where-Object { $_.DisplayName -eq "Golden Music" }
+          if (-not $reg) { throw "smoke: uninstall registry entry missing" }
+          # 3. silent uninstall — must leave no uninstall entry behind
+          Start-Process -FilePath $unins.FullName -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NOCANCEL","/NORESTART" -Wait
+          Start-Sleep -Seconds 2
+          $left = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" -ErrorAction SilentlyContinue |
+                  Where-Object { $_.DisplayName -eq "Golden Music" }
+          if ($left) { throw "smoke: uninstall registry entry still present" }
+
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        shell: python
+        run: |
+          import pathlib, re
+          v = "${{ steps.ver.outputs.version }}"
+          text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
+          m = re.search(rf"^## \[{re.escape(v)}\].*?\n(.*?)(?=^## \[|\Z)", text,
+                        re.M | re.S)
+          body = m.group(1).strip() if m else f"Golden Music v{v}"
+          pathlib.Path("release_notes.md").write_text(body, encoding="utf-8")
+          print(f"::set-output name=found::{bool(m)}")
+
+      - name: Create GitHub release (tag pushes only)
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" ^
+            "dist/installer/GoldenMusicSetup-${{ steps.ver.outputs.version }}.exe" ^
+            "dist/installer/GoldenMusicSetup-${{ steps.ver.outputs.version }}.exe.sha256" ^
+            "dist/installer/GoldenMusic-${{ steps.ver.outputs.version }}-portable.zip" ^
+            --title "Golden Music v${{ steps.ver.outputs.version }}" ^
+            --notes-file release_notes.md
+
+      - name: Upload artifacts (dry-run visibility)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-candidates
+          path: |
+            dist/installer/*.exe
+            dist/installer/*.sha256
+            dist/installer/*.zip
+            release_notes.md

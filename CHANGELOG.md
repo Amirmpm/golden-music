@@ -5,6 +5,82 @@ All notable changes to Golden Music will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-10-16
+
+### Added
+
+- **"Open with" / file-argument handling** — files passed by the OS (Explorer
+  "Open with", file associations, `GoldenMusic.exe song.mp3`) queue as an
+  ad-hoc playlist and start playing; works on cold start AND when the app is
+  already running (second instance forwards via IPC and exits). The ad-hoc
+  queue never mutates the library or the saved config.
+- **Single-instance IPC** (`ipc.py`) — per-user QLocalServer/QLocalSocket
+  channel with strict validation (size cap, extension allow-list, existence
+  check, ack protocol). Relaunching now reveals the running instance even
+  when it is hidden in the tray — the old visible-window EnumWindows
+  approach could never do that. Stale locks fall back to a normal start.
+- **In-app auto-update** (`updater.py`, `update_dialog.py`) — background
+  check of GitHub Releases at most once per 24 h, non-modal in-app banner,
+  update dialog with Update now / Install when I quit / Remind me later /
+  Skip this version, SHA-256-verified downloads (sidecar `.sha256` or API
+  digest) into `~/.goldenmusic/updates/`, silent self-update for installed
+  editions with an `--updated` relaunch toast, pending-marker failure
+  recovery, portable/source editions get a release-page link only.
+  Manual "Check for updates" button in Settings → About with explicit
+  feedback; auto-checks can be disabled.
+- **In-app toast notifications** — every operational notification (scan
+  finished, queued, removed, deleted, audio output, audio errors, sleep
+  timer, track change) is now a theme-aware toast inside the window
+  instead of a tray balloon.
+- **Installer "Open with" integration** — optional checked task registers a
+  ProgID, `Applications\GoldenMusic.exe` SupportedTypes and
+  `OpenWithProgids` for all supported audio extensions under HKA
+  (unins flags included). Default apps are never hijacked.
+- **Version single source of truth** (`version.py`) — the installer default,
+  README badge/links, About dialog and CHANGELOG must all agree
+  (`scripts/test_version_sync.py` enforces it).
+
+### Changed
+
+- **Tray Show/Hide** — a minimized or hidden window now always comes back
+  restored, raised and focused (`showNormal` + Win32 foreground nudge);
+  a tray click on a minimized window no longer hides it. The tray popup
+  button is relabeled "Show/Hide" to match the behavior.
+- **Keyboard shortcuts** — README bindings (Ctrl+arrows, Ctrl+F/M/J, F11)
+  are now the actual QShortcuts; bare keys (Space/Enter/arrows/M/F) act
+  only when no list, slider or text input owns the key — pressing F with a
+  list focused no longer launches the fullscreen player, and type-ahead /
+  arrow navigation work in every list again.
+- **Close-to-tray notice** — shown once ever (persisted in config); the
+  minimize balloon and the repeated close balloons are gone.
+- **Installer** — `AppMutex` + `CloseApplications=yes` so upgrades detect a
+  running player; `AppVersion`/`OutputBaseFilename` derive from
+  `/DAppVersion=` (CI passes version.py's value); the legacy-uninstaller
+  `DelTree` cleanup now runs only for real v1.0.0 migrations in a
+  different folder — it used to run on every upgrade-in-place and could
+  delete the current uninstaller; silent `--updated` relaunch entry.
+- **README** — live Actions CI badge replaces the static "passing" image;
+  shortcut table now matches the code.
+
+### Fixed
+
+- Restore-from-tray leaving the window minimized behind other windows or
+  hiding it instead of restoring (regression suite: `test_tray_toggle.py`).
+- "Open with" doing nothing at all (regression suite: `test_open_with.py`).
+- Bare-key shortcuts hijacking list type-ahead/navigation (regression
+  suite: `test_shortcuts.py`).
+- Second launch silently doing nothing while the app sat in the tray.
+
+### Security
+
+- `stats.json` and `lyrics_cache/*.json` are written with owner-only
+  permissions (chmod 0600 on POSIX), matching the config.json hardening.
+- Updater hardening: HTTPS-only fetcher with a redirect-host allow-list,
+  400 MB size cap, validated filenames, atomic `.part` rename, mandatory
+  SHA-256 verification, no shell, no code execution from release notes.
+- Bandit gate (`--severity-level medium`) is clean: SHA1 in the lyrics
+  cache key marked non-security, lyrics fetch validates the https scheme.
+
 ## [2.1.1] - 2026-09-12
 
 ### 🛡️ Fixed — Data-loss bug (library wiped, test tracks appeared)
@@ -349,6 +425,6 @@ The first stable, production-ready version of Golden Music!
 
 <div align="center">
 
-**Golden Music v2.1.1** — Psychology Theme Suite 🎨
+**Golden Music v2.2.0** — Psychology Theme Suite 🎨
 
 </div>
