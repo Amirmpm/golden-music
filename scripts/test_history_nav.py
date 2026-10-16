@@ -147,9 +147,12 @@ def double_click_mid_session_appends():
     w.shuffle = True
     w._on_next(); w._on_next()
     h_before = len(w.play_history)
-    # Double-click a specific track in the list — appends to session history
-    target = T[5]
-    w.current_index = 5
+    # Double-click a specific track in the list — appends to session history.
+    # Pick a target the random shuffle did NOT just play: _push_history
+    # legitimately skips a consecutive duplicate, so landing on the last
+    # random pick made this check flaky (it depended on the RNG sequence).
+    target = T[5] if w.current_track != T[5] else T[4]
+    w.current_index = T.index(target)
     w._load_and_play_current()
     assert len(w.play_history) == h_before + 1, \
         f"expected append: {h_before} -> {len(w.play_history)}"
