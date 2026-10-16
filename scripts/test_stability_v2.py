@@ -131,16 +131,19 @@ check("crash_guard_swallows_exceptions", excepthook_installed_shape)
 print("\n=== Single Instance Helpers ===")
 def lock_helpers_exist():
     import main as m
+    # v2.2.0: the win32 window-title raise was replaced by the per-user
+    # QLocalServer IPC channel (works for tray-hidden windows too).
     assert callable(m._acquire_single_instance_lock)
-    assert callable(m._focus_existing_instance)
-    assert callable(m._raise_window_by_title)
+    assert callable(m._forward_to_running)
 check("single_instance_api_present", lock_helpers_exist)
 
-def raise_window_bad_title_returns_false():
+def forward_with_no_instance_is_safe():
+    # No server running in a fresh sandbox: forwarding must return False
+    # (fall back to a normal start), never raise.
     import main as m
-    result = m._raise_window_by_title("No Such Window Title XYZ 000")
+    result = m._forward_to_running([])
     assert result is False
-check("raise_window_missing_title_safe", raise_window_bad_title_returns_false)
+check("forward_missing_instance_safe", forward_with_no_instance_is_safe)
 
 print("\n=== Assets ===")
 def asset_sizes_reasonable():

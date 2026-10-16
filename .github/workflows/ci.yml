@@ -35,7 +35,7 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
-          foreach ($t in @('test_functional','test_deep','test_stability','test_stability_v2','test_history_nav','test_features','test_crash')) {
+          foreach ($t in @('test_functional','test_deep','test_stability','test_stability_v2','test_history_nav','test_features','test_crash','test_tray_toggle','test_open_with','test_shortcuts','test_updater','test_version_sync')) {
             Write-Host "::group::=== $t ==="
             python "scripts/$t.py"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
