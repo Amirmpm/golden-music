@@ -64,7 +64,7 @@ jobs:
         run: python build_release.py
 
       - name: Build installer (Inno Setup)
-        uses: Minionguyjpro/Inno-Setup-Action@v1.2
+        uses: Minionguyjpro/Inno-Setup-Action@ec985ef724d1fb4a05bfbc1a8e49930dc76d2b0c # v1.2.9 (pinned: v1.2 tag vanished upstream)
         with:
           path: goldenmusic.iss
 
