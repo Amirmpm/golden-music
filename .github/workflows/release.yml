@@ -144,13 +144,9 @@ jobs:
         if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "${{ github.ref_name }}" ^
-            "dist/installer/GoldenMusicSetup-${{ steps.ver.outputs.version }}.exe" ^
-            "dist/installer/GoldenMusicSetup-${{ steps.ver.outputs.version }}.exe.sha256" ^
-            "dist/installer/GoldenMusic-${{ steps.ver.outputs.version }}-portable.zip" ^
-            --title "Golden Music v${{ steps.ver.outputs.version }}" ^
-            --notes-file release_notes.md
+        # single line — the default shell on Windows runners is pwsh, where
+        # cmd-style '^' continuations are a syntax error
+        run: gh release create "${{ github.ref_name }}" "dist/installer/GoldenMusicSetup-${{ steps.ver.outputs.version }}.exe" "dist/installer/GoldenMusicSetup-${{ steps.ver.outputs.version }}.exe.sha256" "dist/installer/GoldenMusic-${{ steps.ver.outputs.version }}-portable.zip" --title "Golden Music v${{ steps.ver.outputs.version }}" --notes-file release_notes.md
 
       - name: Upload artifacts (dry-run visibility)
         if: github.event_name == 'workflow_dispatch'
