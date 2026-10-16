@@ -83,21 +83,34 @@ jobs:
         shell: pwsh
         run: |
           $exe = "dist/installer/GoldenMusicSetup-${{ steps.ver.outputs.version }}.exe"
+          # Wait on the installer PID only — Start-Process -Wait waits for ALL
+          # descendants, and the [Run] 'skipifnotsilent --updated' entry
+          # launches the tray app, which never exits on a runner.
+          function Invoke-Setup([string]$File, [string[]]$SetupArgs) {
+            $p = Start-Process -FilePath $File -ArgumentList $SetupArgs -PassThru
+            if (-not $p.WaitForExit(600000)) {
+              $p.Kill(); throw "smoke: $File did not exit within 10 minutes"
+            }
+            if ($p.ExitCode -ne 0) { throw "smoke: $File exit code $($p.ExitCode)" }
+            # close the app the silent install relaunched via [Run] --updated,
+            # so the next stage's CloseApplications check starts clean
+            Stop-Process -Name "GoldenMusic" -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 3
+          }
           # 1. silent first install
-          Start-Process -FilePath $exe -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NOCANCEL","/NORESTART" -Wait
+          Invoke-Setup $exe @("/VERYSILENT","/SUPPRESSMSGBOXES","/NOCANCEL","/NORESTART")
           $unins = Get-ChildItem "$env:LOCALAPPDATA\Programs\GoldenMusic\unins000.exe" -ErrorAction SilentlyContinue
           if (-not $unins) { $unins = Get-ChildItem "$env:ProgramFiles\GoldenMusic\unins000.exe" -ErrorAction SilentlyContinue }
           if (-not $unins) { throw "smoke: unins000.exe missing after install" }
           # 2. silent upgrade over it (the DelTree regression guard: the
           #    second run must NOT delete the uninstaller it just wrote)
-          Start-Process -FilePath $exe -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NOCANCEL","/NORESTART" -Wait
+          Invoke-Setup $exe @("/VERYSILENT","/SUPPRESSMSGBOXES","/NOCANCEL","/NORESTART")
           if (-not (Test-Path $unins.FullName)) { throw "smoke: uninstaller deleted by upgrade — DelTree regression" }
           $reg = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" -ErrorAction SilentlyContinue |
                  Where-Object { $_.DisplayName -eq "Golden Music" }
           if (-not $reg) { throw "smoke: uninstall registry entry missing" }
           # 3. silent uninstall — must leave no uninstall entry behind
-          Start-Process -FilePath $unins.FullName -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NOCANCEL","/NORESTART" -Wait
-          Start-Sleep -Seconds 2
+          Invoke-Setup $unins.FullName @("/VERYSILENT","/SUPPRESSMSGBOXES","/NOCANCEL","/NORESTART")
           $left = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" -ErrorAction SilentlyContinue |
                   Where-Object { $_.DisplayName -eq "Golden Music" }
           if ($left) { throw "smoke: uninstall registry entry still present" }
