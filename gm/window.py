@@ -466,6 +466,15 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.albums_page)
         self.stats_page = StatsPage3(self)                    # 3 stats
         self.stack.addWidget(self.stats_page)
+        try:
+            self.stats_page.play_requested.connect(
+                lambda pth: self._play_path_standalone(pth))
+            self.stats_page.favorite_toggled.connect(
+                lambda pth, on: self._stats_toggle_favorite(pth, on))
+            self.stats_page.artist_chart.row_clicked.connect(
+                lambda row: self._play_artist_from_stats(row))
+        except Exception:
+            log.exception("stats page signal wiring failed")
         self.artists_page = ArtistsPage(self)                 # 4 artists
         self.stack.addWidget(self.artists_page)
         self.genres_page = GenresPage(self)                   # 5 genres
@@ -561,7 +570,7 @@ class MainWindow(QMainWindow):
             self._on_folder_tree_context_menu)
         left_split.addWidget(self.folder_tree)
 
-        # Track list
+        # Track list (v3: rows OR virtual table, switchable in settings)
         self.library_list = QListWidget()
         self.library_list.setObjectName("TrackList")
         self.library_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -569,6 +578,14 @@ class MainWindow(QMainWindow):
         self.library_list.setMinimumHeight(200)
         self._track_delegate = TrackRowDelegate(self.theme, self.library_list)
         self.library_list.setItemDelegate(self._track_delegate)
+        try:
+            self.library_table = LibraryTable(self)
+            self.library_table.set_columns(
+                list(self.prefs.get("table_columns",
+                                    ["index", "title", "artist", "album",
+                                     "duration"])))
+        except Exception:
+            self.library_table = None
         left_split.addWidget(self.library_list)
 
         left_split.setSizes([160, 400])
@@ -1771,6 +1788,19 @@ class MainWindow(QMainWindow):
             self._start_scan(nxt)
 
     def _rebuild_library_list(self, rebuild_tree: bool = False):
+        """v3: routes to the virtual table when the table view is active,
+        otherwise the classic two-line row list."""
+        try:
+            tbl = getattr(self, "library_table", None)
+            stack = getattr(self, "_list_stack", None)
+            if tbl is not None and stack is not None and stack.currentIndex() == 1:
+                tbl.set_paths(self._get_filtered_sorted_library())
+                return
+        except Exception:
+            log.exception("table refresh failed")
+        self._rebuild_library_list_orig(rebuild_tree=rebuild_tree)
+
+    def _rebuild_library_list_orig(self, rebuild_tree: bool = False):
         """Rebuild the library list FAST — just filenames, no tag reading.
         Tags are loaded in background by _start_tag_loader.
 
@@ -3914,6 +3944,11 @@ class MainWindow(QMainWindow):
             _stop_remotes()
         except Exception:
             pass
+        try:
+            if getattr(self, "_mpris", None) is not None:
+                self._mpris.stop()
+        except Exception:
+            pass
         for _attr in ("_content_tap", "_waveform_worker"):
             _t = getattr(self, _attr, None)
             if _t is not None:
@@ -5231,6 +5266,32 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+    def _stats_toggle_favorite(self, path, on):
+        try:
+            if on:
+                self.favorites.add(path)
+            else:
+                self.favorites.discard(path)
+            if self.current_track == path:
+                self.player_bar.update_like_button(path in self.favorites)
+            self._rebuild_favorites_list()
+            self._save_config()
+        except Exception:
+            log.exception("stats favorite toggle failed")
+
+    def _play_artist_from_stats(self, row):
+        try:
+            rows = self.stats_page.artist_chart.rows()
+            artist = rows[row][0] if row < len(rows) else None
+            if not artist or getattr(self, "store", None) is None:
+                return
+            tracks = self.store.db.tracks_where("artist=?", (artist,))
+            paths = [t["path"] for t in tracks if os.path.exists(t["path"])]
+            if paths:
+                self._play_from_list(paths, 0, self.current_view)
+        except Exception:
+            log.exception("stats artist play failed")
+
     def _store_remove(self, paths):
         """Explicit removal from the SQLite store (v3.0). Called by every
         UI action that removes tracks/folders; _save_config's reconcile is
@@ -5711,6 +5772,12 @@ class MainWindow(QMainWindow):
         # v3 feature wiring once prefs + store are live
         try:
             self._apply_audio_prefs()
+            try:
+                if str(sys.platform).startswith("linux"):
+                    from gm.mpris import start_mpris
+                    self._mpris = start_mpris(self)
+            except Exception:
+                log.exception("mpris wiring failed")
             self._sync_smart_playlists()
             self._apply_folder_watch()
             if self.prefs.get("webremote_enabled", False) or \
