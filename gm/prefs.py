@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — user preferences (the ``prefs`` dict).
+"""Golden Music 2.3 — user preferences (the ``prefs`` dict).
 
 Small scalar/UI settings live in config.json under the ``prefs`` key so the
 existing validated-config machinery keeps protecting them. Library data is

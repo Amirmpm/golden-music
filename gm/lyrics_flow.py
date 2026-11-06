@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — the upgraded lyrics panel (orchestrator).
+"""Golden Music 2.3 — the upgraded lyrics panel (orchestrator).
 
 Combines: the bilingual LyricsView, quality/spam detection with the
 user-confirmation flow, the lyrics editor, per-track remembered offset,

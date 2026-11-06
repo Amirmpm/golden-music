@@ -1,4 +1,4 @@
-"""Offline tests for Golden Music 3.0 — gm/ui/stats3.py (stats page v3).
+"""Offline tests for Golden Music 2.3 — gm/ui/stats3.py (stats page v3).
 
 Covers: LineChart / BarChart / HBarChart / Heatmap / TopTracksList /
 WrappedDialog / StatsPage3 against a REAL gm.db.LibraryDB seeded in a

@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — multi-provider lyrics search (Qt-free).
+"""Golden Music 2.3 — multi-provider lyrics search (Qt-free).
 
 Search layer between the UI/worker and the network:
 

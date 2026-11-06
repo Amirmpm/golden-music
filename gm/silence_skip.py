@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — silence detection and skipping (Qt-free).
+"""Golden Music 2.3 — silence detection and skipping (Qt-free).
 
 - :func:`detect_silence_windows` computes RMS over 50 ms windows and
   returns merged ``(start_ms, end_ms)`` silence intervals; windows shorter

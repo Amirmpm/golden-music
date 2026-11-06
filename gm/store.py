@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — LibraryStore: the bridge between the SQLite database
+"""Golden Music 2.3 — LibraryStore: the bridge between the SQLite database
 and the MainWindow's in-memory structures.
 
 The window keeps its battle-tested in-memory shapes (library list, favorites

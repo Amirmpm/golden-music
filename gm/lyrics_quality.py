@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — lyrics text quality gate (Qt-free, network-free).
+"""Golden Music 2.3 — lyrics text quality gate (Qt-free, network-free).
 
 Decides whether a lyrics payload (from cache, embedded tags or a provider)
 is worth showing, and whether a freshly found candidate should be shown to

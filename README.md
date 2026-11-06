@@ -6,9 +6,9 @@
 
 ### The modern music player that stays out of your way
 
-*SQLite-fast library · 12 psychology themes · Real gapless & crossfade · Windows + Linux*
+*SQLite-fast library · 12 psychology themes · Real gapless & crossfade · Tray volume & seek · Windows + Linux*
 
-[![Version](https://img.shields.io/badge/Version-3.0.0-brightgreen?style=for-the-badge)](../../releases)
+[![Version](https://img.shields.io/badge/Version-2.3.0-brightgreen?style=for-the-badge)](../../releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![PyQt6](https://img.shields.io/badge/PyQt6-6.11+-41CD52?style=for-the-badge&logo=qt&logoColor=white)](https://www.riverbankcomputing.com/software/pyqt/)
 [![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white)](#)
@@ -22,6 +22,51 @@
 ---
 
 ## 📸 Screenshots
+
+The redesigned interface — captured live from the app:
+
+<table>
+<tr>
+<td align="center"><b>📚 Library</b></td>
+<td align="center"><b>💿 Albums</b></td>
+</tr>
+<tr>
+<td><img src="screenshots/v3_library.png" width="400" alt="Library page"></td>
+<td><img src="screenshots/v3_albums.png" width="400" alt="Albums page"></td>
+</tr>
+<tr>
+<td align="center"><b>🎤 Artists</b></td>
+<td align="center"><b>🎼 Genres</b></td>
+</tr>
+<tr>
+<td><img src="screenshots/v3_artists.png" width="400" alt="Artists page"></td>
+<td><img src="screenshots/v3_genres.png" width="400" alt="Genres page"></td>
+</tr>
+<tr>
+<td align="center"><b>📊 Stats</b></td>
+<td align="center"><b>⌨️ Command Palette</b></td>
+</tr>
+<tr>
+<td><img src="screenshots/v3_stats.png" width="400" alt="Stats page"></td>
+<td><img src="screenshots/v3_command_palette.png" width="400" alt="Command palette"></td>
+</tr>
+<tr>
+<td align="center"><b>📻 Radio</b></td>
+<td align="center"><b>🎚️ Settings</b></td>
+</tr>
+<tr>
+<td><img src="screenshots/v3_radio.png" width="400" alt="Radio page"></td>
+<td><img src="screenshots/v3_settings.png" width="400" alt="Settings dialog"></td>
+</tr>
+<tr>
+<td align="center"><b>▶ Up Next queue</b></td>
+<td align="center"><b>📋 Playlists</b></td>
+</tr>
+<tr>
+<td><img src="screenshots/v3_queue.png" width="400" alt="Queue panel"></td>
+<td><img src="screenshots/v3_playlists.png" width="400" alt="Playlists page"></td>
+</tr>
+</table>
 
 Every theme pairs a dark shot with its light twin — six matched duos:
 
@@ -76,7 +121,7 @@ Every theme pairs a dark shot with its light twin — six matched duos:
 </tr>
 </table>
 
-*All twelve theme palettes, captured live from the app — the v3 redesign restyles every control around these same twelve palettes (fresh v3 UI captures coming soon).*
+*All twelve theme palettes, captured live from the app — the redesigned UI restyles every control around these same twelve palettes.*
 
 ---
 
@@ -124,6 +169,10 @@ have.
   everything gets a turn before anything repeats — plus history-aware Previous
 - **A-B Repeat & playback speed**, smooth volume fades, sleep timer
 - **OS media controls** — Windows SMTC + global media keys, Linux MPRIS
+- **Tray popup with volume & seek** — the glassy flyout above the taskbar
+  now carries a real progress bar (elapsed / total, click or drag to seek)
+  and a volume slider with mute toggle, always in sync with the main
+  player
 
 ### 🎨 A theme for every mood — built on color psychology
 
@@ -147,7 +196,7 @@ theme* to follow your OS dark/light mode — or let the optional **dynamic
 Material You-style theme** derive a fresh palette from the current album
 cover (Settings → Appearance).
 
-### 🧭 A redesigned interface (v3)
+### 🧭 A redesigned interface
 
 - A full **QSS design system** — typography scale, 10 px radii, layered
   surfaces, hover/press states everywhere, modern scrollbars, menus,
@@ -159,8 +208,8 @@ cover (Settings → Appearance).
 - A rebuilt **Settings dialog** — 10 categories with live search across
   every settings row
 - Labeled **sidebar with badges**, skeleton loading rows, friendly empty
-  states, and a glassy tray popup that always sits exactly above the
-  taskbar
+  states, and a glassy **tray popup** — transport, seek and volume — that
+  always sits exactly above the taskbar
 
 ### 🎤 Lyrics that actually match
 
@@ -182,7 +231,7 @@ share.
 
 ### 🛡️ Reliability by design
 
-- **Verified, rollback-safe migration** — the first 3.0 start backs up your
+- **Verified, rollback-safe migration** — the first 2.3 start backs up your
   legacy JSON data (`backups/pre_sqlite_<timestamp>/`), migrates it to
   SQLite in one atomic transaction and verifies row counts; any failure
   rolls back to legacy JSON mode. Original files are never deleted
@@ -234,8 +283,8 @@ keyboard or headset work globally.*
 ### Option 1: Download Installer (Windows, Recommended)
 
 1. Go to [Releases](../../releases)
-2. Download `GoldenMusicSetup-3.0.0.exe`
-3. Run the installer — it detects an existing installation and updates in place; your library, favorites, ratings and settings are preserved (the first 3.0 start migrates your data to SQLite — backed up and verified)
+2. Download `GoldenMusicSetup-2.3.0.exe`
+3. Run the installer — it detects an existing installation and updates in place; your library, favorites, ratings and settings are preserved (the first 2.3 start migrates your data to SQLite — backed up and verified)
 4. Enjoy your music! 🎉
 
 Linux users: see [INSTALLATION.md](INSTALLATION.md) for the run-from-source
@@ -297,7 +346,7 @@ build_windows.bat
 
 Output:
 - `dist\GoldenMusic\GoldenMusic.exe` — The app (portable folder)
-- `dist\installer\GoldenMusicSetup-3.0.0.exe` — The installer
+- `dist\installer\GoldenMusicSetup-2.3.0.exe` — The installer
 
 ---
 
@@ -324,7 +373,7 @@ golden-music/
 ├── config.py, icons.py, scanner.py, coverart.py, applog.py, ...
 │                            # Shared v2-era modules still in daily use
 │                            #   (themes/QSS, icons, scanning, logging, ...)
-├── scripts/                 # 23 offline test suites + tooling
+├── scripts/                 # 24 offline test suites + tooling
 ├── docs/DECISIONS.md        # Architecture decision log
 ├── requirements.txt         # Hard deps + documented optional extras
 ├── goldenmusic.spec         # PyInstaller spec (optimized)
@@ -342,7 +391,7 @@ golden-music/
 
 ## 🎨 Themes in depth
 
-Golden Music v3 keeps the **color-psychology suite** introduced in v2.0 —
+Golden Music 2.3 keeps the **color-psychology suite** introduced in v2.0 —
 six black-dominant dark themes and six white-dominant light themes,
 monochrome plus gold, blue, purple, pink and green — and rebuilds every
 control around it with a proper QSS design system (`gm/theme_qss.py`): a
@@ -400,7 +449,7 @@ USB-stick installs.
 - Volume, theme, shuffle/repeat state, window geometry
 - All settings preferences
 
-On the first 3.0 start, legacy `config.json` / `tag_cache.json` /
+On the first 2.3 start, legacy `config.json` / `tag_cache.json` /
 `stats.json` library data is migrated into `library.db` — backup-first,
 verified, and rollback-safe (the originals are never deleted).
 

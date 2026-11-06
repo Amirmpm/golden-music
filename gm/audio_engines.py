@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — pluggable audio engine layer (Qt-free at import time).
+"""Golden Music 2.3 — pluggable audio engine layer (Qt-free at import time).
 
 - :class:`AudioEngineBase` — abstract engine API with plain-callable hooks
   (on_position/on_duration/on_state/on_error/on_finished/on_almost_end);

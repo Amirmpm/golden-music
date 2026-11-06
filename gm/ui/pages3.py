@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — library browsing pages (albums / artists / genres /
+"""Golden Music 2.3 — library browsing pages (albums / artists / genres /
 playlists).
 
 New v3.0 pages built on the *provider contract*: every page takes the

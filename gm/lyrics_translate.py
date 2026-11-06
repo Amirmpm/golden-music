@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — bilingual lyrics handling (Qt-free, network-free).
+"""Golden Music 2.3 — bilingual lyrics handling (Qt-free, network-free).
 
 Persian libraries are listened to bilingually: the UI shows the original
 line and, when available, a translation. Three sources of translations

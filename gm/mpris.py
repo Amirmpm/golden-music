@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — MPRIS D-Bus integration (Linux).
+"""Golden Music 2.3 — MPRIS D-Bus integration (Linux).
 
 Registers org.mpris.MediaPlayer2.goldenmusic on the session bus when
 dbus-python is available, exposing the standard Root + Player interfaces:

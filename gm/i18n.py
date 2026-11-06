@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — i18n infrastructure (English + Persian).
+"""Golden Music 2.3 — i18n infrastructure (English + Persian).
 
 Minimal tr() layer: ``tr("Library")`` looks up the active language table and
 falls back to the key itself. Persian strings render RTL; the app sets the

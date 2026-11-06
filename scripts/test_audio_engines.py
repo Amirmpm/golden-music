@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — audio module tests (headless: no PyQt6 anywhere).
+"""Golden Music 2.3 — audio module tests (headless: no PyQt6 anywhere).
 
 Covers, section by section:
   gm.audio_engines  — abstract API, FakeEngine, mpv engine via a fake python-mpv,

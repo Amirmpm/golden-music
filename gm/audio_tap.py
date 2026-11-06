@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — PCM content tap + waveform/spectrum workers.
+"""Golden Music 2.3 — PCM content tap + waveform/spectrum workers.
 
 Real-audio analysis helpers that run OFF the UI thread:
 

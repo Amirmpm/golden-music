@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — lyrics query building (Qt-free, network-free).
+"""Golden Music 2.3 — lyrics query building (Qt-free, network-free).
 
 Turns messy real-world filenames and tags into clean, searchable queries
 and ranks the candidate results that come back:

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """One-time v3.0 refactor helper: split the monolithic main.pyw into the
 `gm/` package.  Uses AST node ranges so it is robust against line drift.
-Kept for history/reproducibility of the 3.0.0 split."""
+Kept for history/reproducibility of the 2.3.0 split."""
 import ast
 import sys
 from pathlib import Path
@@ -207,7 +207,7 @@ from gm.window import MainWindow
 
 # ---------------------------------------------------------------- __init__ files
 (GM / "__init__.py").write_text(
-    '"""Golden Music 3.0 — application package (split of the former main.pyw)."""\n'
+    '"""Golden Music 2.3 — application package (split of the former main.pyw)."""\n'
     'from version import APP_VERSION  # noqa: F401\n', encoding="utf-8")
 (GM / "ui" / "__init__.py").write_text(
     '"""Golden Music UI components."""\n', encoding="utf-8")

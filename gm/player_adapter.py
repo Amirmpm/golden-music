@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — PlayerAdapter: AudioBackend-compatible facade over
+"""Golden Music 2.3 — PlayerAdapter: AudioBackend-compatible facade over
 the v3 engine layer (EngineCoordinator + optional libmpv engine).
 
 Surface compatibility: the 2.x MainWindow drives playback through

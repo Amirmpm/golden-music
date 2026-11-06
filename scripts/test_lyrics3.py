@@ -1,4 +1,4 @@
-"""Offline tests for the Golden Music 3.0 lyrics modules.
+"""Offline tests for the Golden Music 2.3 lyrics modules.
 
 Covers: gm/lyrics_query.py, gm/lyrics_quality.py, gm/lyrics_search.py,
 gm/lyrics_translate.py, gm/lyrics_io.py, gm/rating_tags.py.

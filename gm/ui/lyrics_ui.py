@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — lyrics UI layer (Qt widgets).
+"""Golden Music 2.3 — lyrics UI layer (Qt widgets).
 
 The Qt half of the lyrics overhaul. Everything here *renders and edits*
 lyrics that the Qt-free engine modules already handle:

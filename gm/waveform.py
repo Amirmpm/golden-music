@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — waveform peak extraction and cache (Qt-free).
+"""Golden Music 2.3 — waveform peak extraction and cache (Qt-free).
 
 - :func:`decode_peaks` decodes a track via python-miniaudio (lazy import;
   returns ``(None, None)`` when unavailable) and computes per-bucket

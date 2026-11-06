@@ -307,7 +307,7 @@ class LogCapture(logging.Handler):
 
 
 # ===========================================================================
-print("Golden Music 3.0 remote-control module tests")
+print("Golden Music 2.3 remote-control module tests")
 print("=" * 60)
 
 # ---------------------------------------------------------------------------

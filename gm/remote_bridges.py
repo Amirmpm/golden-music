@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — bridges between MainWindow and the remote servers.
+"""Golden Music 2.3 — bridges between MainWindow and the remote servers.
 
 The servers (gm.webremote / gm.telegrambot) call a duck-typed bridge from
 their own threads; the bridges below marshal every call onto the Qt main

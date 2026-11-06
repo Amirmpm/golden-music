@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — 10-band ISO equalizer (Qt-free, pure python math).
+"""Golden Music 2.3 — 10-band ISO equalizer (Qt-free, pure python math).
 
 - 10 ISO band centres: 31, 62, 125, 250, 500, 1k, 2k, 4k, 8k, 16 kHz.
 - Band gains in -12..+12 dB.

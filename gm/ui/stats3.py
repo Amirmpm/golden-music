@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — Stats page v3 (custom-painted, theme-aware, guarded).
+"""Golden Music 2.3 — Stats page v3 (custom-painted, theme-aware, guarded).
 
 A self-contained listening-analytics page built exclusively from QPainter —
 no third-party chart libraries. Every widget re-renders from the active

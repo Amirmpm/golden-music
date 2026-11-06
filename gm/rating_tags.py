@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — star ratings in audio tags (Qt-free, mutagen lazy).
+"""Golden Music 2.3 — star ratings in audio tags (Qt-free, mutagen lazy).
 
 Reads and writes the 0-5 star rating using each format's native field:
 

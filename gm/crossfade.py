@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — crossfade math and tick-driven fade state (Qt-free).
+"""Golden Music 2.3 — crossfade math and tick-driven fade state (Qt-free).
 
 Equal-power (constant-power) fades: the outgoing track follows a
 sqrt(1 - x) curve while the incoming track follows sqrt(x), so the summed

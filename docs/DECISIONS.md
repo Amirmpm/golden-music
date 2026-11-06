@@ -1,6 +1,6 @@
-# Golden Music — Architecture & Decision Log (3.0.0)
+# Golden Music — Architecture & Decision Log (2.3.0)
 
-Non-obvious technical decisions made during the 3.0.0 cycle, and why.
+Non-obvious technical decisions made during the 2.3.0 cycle, and why.
 Numbered for reference from code comments and discussions.
 
 ---
@@ -37,7 +37,7 @@ parent dir still exists (offline drives keep their rows).
 ## #d2 — Audio: adapter facade over an engine layer (mpv optional, Qt fallback)
 
 **Decision:** `gm/player_adapter.py` exposes exactly the v2 `AudioBackend`
-surface (so ~100 MainWindow call sites survived the 3.0 refactor) over
+surface (so ~100 MainWindow call sites survived the 2.3 refactor) over
 `EngineCoordinator` with two engine slots. Engine order from settings:
 `mpv` (python-mpv + libmpv) → `qt` (QMediaPlayer). `PlayerAdapter`
 degrades mid-session to the legacy backend if an engine dies.
@@ -68,7 +68,7 @@ default dirs). Windows keeps pywin32 paths; Linux gets MPRIS via
 + touch-first UI variants + python-for-android/Qt CI, which exceeds this
 cycle's budget. Documented in INSTALLATION.md as the recommended route;
 the platform layer keeps the code ready for it. Honest status: not shipped
-in 3.0.0.
+in 2.3.0.
 
 ## #d4 — Settings as a flat validated `prefs` dict
 
@@ -148,3 +148,35 @@ a stale cache entry can never resurrect a removed track.
 module is `main.py` (re-export surface for scripts/tests). This fixed a
 portability wart: `.pyw` is only importable on Windows CPython, which kept
 Linux CI from ever running the GUI suites.
+
+## #d14 — Tray volume/seek: one signal per control, guarded syncs
+
+The tray popup's new volume row and seek bar reuse the player-bar slider
+QSS (same objectNames) and route user edits through exactly one signal
+each (`volume_changed` / `seek_requested`) into the window's SINGLE
+volume/seek code paths. Every programmatic push back into the popup goes
+through `_syncing`-guarded `update_*()` methods, so no signal echo loop is
+possible (regression-tested with counters in `test_tray_av`). Position
+pushes are skipped while the popup is hidden and re-synced wholesale on
+open — zero idle cost. Mute is "volume 0" (the main-bar convention), which
+keeps audio, both sliders, the icon and the persisted config from ever
+disagreeing. Streams (duration 0) disable the seek row instead of showing
+a lying slider.
+
+## #d15 — Release renumbered 3.0.0 → 2.3.0
+
+The big rewrite was developed under the working name "3.0.0", but the
+maintainer shipped it as **2.3.0**. `version.py` stays the single source
+of truth; `test_version_sync.py` (which checks the installer default,
+README badge/links, INSTALLATION.md and the CHANGELOG section) guarantees
+no stale "3.0.0" survives anywhere user-visible.
+
+## #d16 — New brand icon pipeline
+
+The new black-and-gold "G" mark is generated once from the source art by
+`scripts/make_icons.py` (kept outside the repo's script set — it is a
+build-time tool): every size 16–256 px PNG, the 160 px settings logo and
+a multi-size `.ico` are palette-quantized (256 colors, dithering) so the
+whole set stays under `test_stability_v2`'s asset budget (< 300 KB total,
+< 80 KB icon.png, < 60 KB logo.png) while looking identical at taskbar
+sizes.

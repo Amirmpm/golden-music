@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — smart playlists.
+"""Golden Music 2.3 — smart playlists.
 
 Each smart playlist is a JSON spec stored in ``playlists.smart_query``:
     {"rules": [{"field": "play_count", "op": ">=", "value": 5}, ...],

@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — platform abstraction layer.
+"""Golden Music 2.3 — platform abstraction layer.
 
 Every OS-specific capability the app uses is exposed behind a small function
 here so the rest of the code stays platform-neutral (Windows / Linux /

@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — Material You-style dynamic theme from album art.
+"""Golden Music 2.3 — Material You-style dynamic theme from album art.
 
 Extracts a vibrant accent color from the current cover (pure-Qt quantizer:
 scale to 24x24, bucket by hue with saturation/value weighting, prefer

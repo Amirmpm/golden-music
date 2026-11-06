@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — lyrics persistence (Qt-free, mutagen lazily imported).
+"""Golden Music 2.3 — lyrics persistence (Qt-free, mutagen lazily imported).
 
 Writing lyrics back out — sidecar files and embedded tags — plus the
 offset shift used by the sync controls. All failures raise

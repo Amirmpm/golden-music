@@ -1,4 +1,4 @@
-"""Offline tests for the Golden Music 3.0 settings dialog (gm/ui/settings3.py).
+"""Offline tests for the Golden Music 2.3 settings dialog (gm/ui/settings3.py).
 
 Covers the dialog contract with a FAKE main window that only provides
 ``prefs``, ``apply_prefs`` and ``theme`` — everything else the dialog

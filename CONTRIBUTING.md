@@ -196,7 +196,7 @@ If applicable, add screenshots.
 **Environment:**
 - OS: Windows 11 / Ubuntu 24.04 (include your distro on Linux)
 - Python version: 3.12.0
-- Golden Music version: 3.0.0
+- Golden Music version: 2.3.0
 - How did you install: [installer / from source]
 - Optional extras installed: [python-mpv / miniaudio / qrcode / dbus-python / none]
 ```

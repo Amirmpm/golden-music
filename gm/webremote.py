@@ -1,5 +1,5 @@
 """
-Golden Music 3.0 — LAN web remote control server (stdlib only, no Qt).
+Golden Music 2.3 — LAN web remote control server (stdlib only, no Qt).
 
 A tiny, dependency-free remote-control channel for the player: one
 mobile-friendly single-page HTML UI plus a small JSON API.  The module is

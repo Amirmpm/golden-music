@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — JSON -> SQLite migration.
+"""Golden Music 2.3 — JSON -> SQLite migration.
 
 Safety contract (non-negotiable):
   1. BACK UP FIRST — config.json / tag_cache.json / stats.json are copied to

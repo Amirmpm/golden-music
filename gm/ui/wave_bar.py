@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — waveform seekbar + spectrum visualizer widgets."""
+"""Golden Music 2.3 — waveform seekbar + spectrum visualizer widgets."""
 from __future__ import annotations
 
 from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer

@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — SQLite library database (FTS5 search).
+"""Golden Music 2.3 — SQLite library database (FTS5 search).
 
 Design (see docs/DECISIONS.md #d1):
   * One database file next to the old JSON files: ``library.db`` inside the

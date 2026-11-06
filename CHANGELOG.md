@@ -5,13 +5,16 @@ All notable changes to Golden Music will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.0.0] - 2026-11-06
+## [2.3.0] - 2026-11-06
 
 A landmark release: the whole app moved into a proper `gm/` package, the
 library now lives in an SQLite database with full-text search, every screen
 was redesigned, and playback gained a real engine layer with true gapless
 and crossfade. Golden Music is now developed and CI-tested on **Windows and
 Linux**.
+
+> The release originally developed as "3.0.0" ships as **2.3.0** — the
+> same content, a calmer version number.
 
 ### Added
 
@@ -28,7 +31,7 @@ Linux**.
 - **SQLite library database** (`library.db`, WAL mode) with **FTS5
   full-text search** over title/artist/album/genre — diacritics-folded,
   prefix queries, millisecond results, designed for 100k+ track libraries.
-- **Verified JSON → SQLite migration** — on the first 3.0 start the legacy
+- **Verified JSON → SQLite migration** — on the first 2.3 start the legacy
   `config.json` / `tag_cache.json` / `stats.json` are backed up into
   `backups/pre_sqlite_<timestamp>/` and migrated in one atomic transaction
   with row-count verification. Idempotent; on *any* failure the app rolls
@@ -40,6 +43,16 @@ Linux**.
   Windows-first features degrade gracefully elsewhere.
 
 #### Design & UX
+- **New brand icon** — a black-and-gold "G" mark with an equalizer halo;
+  shipped as the app / tray / taskbar / installer icon in every size
+  (16–256 px PNG + multi-size `.ico`, palette-quantized to keep the
+  installer lean).
+- **Tray popup volume & seek** — the system-tray flyout now has a real
+  progress bar (elapsed / total labels, click-to-seek and drag-scrub) and
+  a volume row (slider + mute toggle). They share the player's single
+  volume/seek code paths, stay live-synced while the popup is open, and
+  disable themselves safely for streams. Covered by `test_tray_av`
+  (21 checks incl. echo-loop and real mouse-event tests).
 - **Full visual redesign** — a new QSS design system (`gm/theme_qss.py`):
   typography scale, 10 px radii, layered surfaces, hover/press states
   everywhere, modern scrollbars, menus, tooltips, tabs and tables. All 12
@@ -149,22 +162,22 @@ Linux**.
   python-mpv, qrcode, dbus-python) are documented and all degrade
   gracefully when missing.
 - **New `docs/DECISIONS.md`** — an architecture decision log for the
-  non-obvious 3.0 choices.
-- **Android** — not shipped in 3.0.0; the recommended route (PySide6 +
+  non-obvious 2.3 choices.
+- **Android** — not shipped in 2.3.0; the recommended route (PySide6 +
   Qt for Android) is documented in INSTALLATION.md.
 
 ### Testing
-- **23 suites in CI** (was 12): all 12 v2 suites kept green plus
+- **24 suites in CI** (was 12): all 12 v2 suites kept green plus
   `test_sqlite` (79 checks), `test_store_boot` (21), `test_audio_engines`
   (55), `test_lyrics3` (128), `test_remote` (149), `test_m3u` (17),
   `test_ui_components` (27), `test_settings3` (65), `test_pages3` (96),
-  `test_stats3` (73), `test_lyrics_ui` (18).
+  `test_stats3` (73), `test_lyrics_ui` (18), `test_tray_av` (21).
 - CI now runs a Windows matrix (Python 3.12/3.13) **plus an Ubuntu matrix
   job** (offscreen Qt), Bandit and the build pipeline.
 
 ### Upgrade notes
 - **Windows installer upgrades preserve everything** — library, favorites,
-  playlists, ratings, stats and settings carry over; the first 3.0 start
+  playlists, ratings, stats and settings carry over; the first 2.3 start
   performs the backed-up, verified, rollback-safe JSON → SQLite migration
   described above.
 - Linux users can run from source (see INSTALLATION.md); optional extras
@@ -591,6 +604,6 @@ The first stable, production-ready version of Golden Music!
 
 <div align="center">
 
-**Golden Music v3.0.0** — SQLite engine · v3 design system 🚀
+**Golden Music v2.3.0** — SQLite engine · v3 design system 🚀
 
 </div>

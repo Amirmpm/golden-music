@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — spectrum analyzer (Qt-free, numpy optional).
+"""Golden Music 2.3 — spectrum analyzer (Qt-free, numpy optional).
 
 - :data:`BANDS` (20) log-spaced band centre frequencies from 40 Hz to
   16 kHz, computed at import (:data:`BAND_FREQS`).

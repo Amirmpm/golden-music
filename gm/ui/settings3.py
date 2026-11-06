@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — Settings dialog (v3).
+"""Golden Music 2.3 — Settings dialog (v3).
 
 A modern two-pane settings dialog:
 
@@ -1402,7 +1402,7 @@ class SettingsDialog3(QDialog):
 
     def _build_about(self, section: _Section) -> None:
         self._build_cat = "about"
-        version = str(getattr(self._mw, "app_version", "3.0.0"))
+        version = str(getattr(self._mw, "app_version", "2.3.0"))
         logo_lbl = QLabel()
         logo_path = _ASSETS_DIR / "logo.png"
         pm = QPixmap(str(logo_path)) if logo_path.is_file() else QPixmap()

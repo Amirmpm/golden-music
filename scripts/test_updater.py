@@ -190,7 +190,7 @@ check("check: headers carry UA + Accept + Api-Version",
 
 r = check_for_update(f, "2.2.0")
 check("check: up_to_date when equal", r["status"] == "up_to_date")
-r = check_for_update(f, "3.0.0")
+r = check_for_update(f, "2.3.0")
 check("check: up_to_date when installed is newer", r["status"] == "up_to_date")
 
 f = FakeFetcher()

@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — loudness normalization (Qt-free, mutagen optional).
+"""Golden Music 2.3 — loudness normalization (Qt-free, mutagen optional).
 
 - :func:`read_replaygain_tags` reads ReplayGain tags across formats via
   mutagen (lazy import): MP3 TXXX frames, FLAC/OGG/Opus Vorbis comments and

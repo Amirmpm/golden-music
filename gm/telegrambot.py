@@ -1,5 +1,5 @@
 """
-Golden Music 3.0 — optional Telegram bot remote (stdlib only, no Qt).
+Golden Music 2.3 — optional Telegram bot remote (stdlib only, no Qt).
 
 A long-polling Telegram bot that drives the player through a bridge
 object supplied by the app.  The bot is OFF by default; the user must

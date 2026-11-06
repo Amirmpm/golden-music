@@ -1,4 +1,4 @@
-"""Offline UI tests for the Golden Music 3.0 lyrics components
+"""Offline UI tests for the Golden Music 2.3 lyrics components
 (gm/ui/lyrics_ui.py): LyricsView, LyricsQualityBar, LyricsEditorDialog,
 FloatingLyricsWidget, MiniLyricsBar + the local LRC parser.
 

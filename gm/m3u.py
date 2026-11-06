@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — M3U/M3U8 playlist import/export.
+"""Golden Music 2.3 — M3U/M3U8 playlist import/export.
 
 Security notes: parsed files are capped (size + entry count); entry paths are
 validated as audio extensions and resolved RELATIVE TO THE PLAYLIST FILE only

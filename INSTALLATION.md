@@ -10,7 +10,7 @@ and Linux** (plus the honest status on Android).
 ### Download the Installer
 
 1. Go to [Releases](../../releases)
-2. Download `GoldenMusicSetup-3.0.0.exe`
+2. Download `GoldenMusicSetup-2.3.0.exe`
 3. Run the installer — it detects an existing installation and updates in place; your library, favorites, ratings and settings are preserved (the first 3.0 start migrates your data to the new SQLite library — backed up and verified)
 4. Follow the setup wizard
 5. Launch Golden Music from the Start Menu or Desktop shortcut
@@ -68,10 +68,10 @@ python --version
 5. **Find the output:**
    ```
    dist\GoldenMusic\GoldenMusic.exe         # The app
-   dist\installer\GoldenMusicSetup-3.0.0.exe # The installer
+   dist\installer\GoldenMusicSetup-2.3.0.exe # The installer
    ```
 
-6. **Run the installer** (`GoldenMusicSetup-3.0.0.exe`) to install properly.
+6. **Run the installer** (`GoldenMusicSetup-2.3.0.exe`) to install properly.
 
 ---
 
@@ -94,7 +94,7 @@ If you want to run Golden Music without building an installer:
 
 ## 🐧 Linux
 
-Golden Music 3.0 runs on Linux from source, and the full test matrix runs
+Golden Music 2.3 runs on Linux from source, and the full test matrix runs
 on Ubuntu in CI. There is no Linux installer yet (see *Linux packaging*
 below).
 
@@ -217,7 +217,7 @@ golden-music\
 │   │                   ├── platforms\
 │   │                   └── styles\
 │   └── installer\
-│       └── GoldenMusicSetup-3.0.0.exe      # The installer
+│       └── GoldenMusicSetup-2.3.0.exe      # The installer
 └── ...
 ```
 
