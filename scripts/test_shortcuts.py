@@ -18,16 +18,12 @@ import testenv as _testenv
 _testenv.install()
 del _testenv
 
-# main.pyw: load by explicit loader — '.pyw' is a source suffix on
-# Windows but not on POSIX, so 'import main' is not portable.
-import importlib.util as _ilu
-from importlib.machinery import SourceFileLoader as _SFL
+# Surface native teardown crashes with Python frames (see test_stability).
+import faulthandler
+faulthandler.enable()
 
-REPO = Path(__file__).resolve().parent.parent
-_main_loader = _SFL("main", str(REPO / "main.pyw"))
-_main_spec = _ilu.spec_from_loader("main", _main_loader)
-main = _ilu.module_from_spec(_main_spec)
-_main_loader.exec_module(main)
+# v3.0: main.py is a real importable shim module (works on POSIX too).
+import main as main
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication, QInputDialog, QLineEdit
@@ -145,7 +141,8 @@ le.close()
 w._force_quit = True
 w.close()
 app.processEvents()
+print("[teardown] window closed", flush=True)
 
 failed = sum(1 for ok_, *_ in results if not ok_)
-print(f"\nshortcuts: {len(results) - failed}/{len(results)} passed")
+print(f"\nshortcuts: {len(results) - failed}/{len(results)} passed", flush=True)
 sys.exit(1 if failed else 0)

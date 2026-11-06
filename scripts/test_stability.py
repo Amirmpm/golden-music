@@ -19,6 +19,12 @@ _testenv.install()
 del _testenv
 # ------------------------------------------------------------------------------
 
+# Surface native crashes (access violations etc.) with Python frames — this
+# suite once exited 1 on the Windows runner AFTER printing success, with no
+# traceback at all; faulthandler turns that into something debuggable.
+import faulthandler
+faulthandler.enable()
+
 from PyQt6.QtCore import Qt, QTimer, QBuffer, QPoint, QPointF
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtGui import QPixmap, QColor, QPainter, QLinearGradient, QBrush, QMouseEvent
@@ -227,4 +233,17 @@ if errors:
     sys.exit(1)
 else:
     print("ALL STABILITY TESTS PASSED!")
+    # Orderly teardown BEFORE interpreter shutdown: closing the window runs
+    # the app's own quit path (stops timers, hides tray, saves config) so the
+    # QApplication and every widget are destroyed while the interpreter is
+    # still fully alive. Relying on implicit GC-at-exit left the process
+    # dying with exit code 1 on the Windows runner (native teardown crash,
+    # invisible without faulthandler) — the same pattern test_tray_toggle /
+    # test_crash already use.
+    try:
+        w._force_quit = True
+        w.close()
+        app.processEvents()
+    except Exception:
+        pass
     sys.exit(0)

@@ -1,16 +1,17 @@
 # 📦 Golden Music — Installation Guide
 
-This guide covers all the ways to install and run Golden Music on Windows.
+This guide covers all the ways to install and run Golden Music on **Windows
+and Linux** (plus the honest status on Android).
 
 ---
 
-## 🚀 Quick Install (Recommended)
+## 🚀 Quick Install (Windows, Recommended)
 
 ### Download the Installer
 
 1. Go to [Releases](../../releases)
-2. Download `GoldenMusicSetup-2.2.0.exe`
-3. Run the installer — it detects an existing installation and updates in place; your library, favorites and settings are preserved
+2. Download `GoldenMusicSetup-2.3.0.exe`
+3. Run the installer — it detects an existing installation and updates in place; your library, favorites, ratings and settings are preserved (the first 3.0 start migrates your data to the new SQLite library — backed up and verified)
 4. Follow the setup wizard
 5. Launch Golden Music from the Start Menu or Desktop shortcut
 
@@ -67,14 +68,14 @@ python --version
 5. **Find the output:**
    ```
    dist\GoldenMusic\GoldenMusic.exe         # The app
-   dist\installer\GoldenMusicSetup-2.2.0.exe # The installer
+   dist\installer\GoldenMusicSetup-2.3.0.exe # The installer
    ```
 
-6. **Run the installer** (`GoldenMusicSetup-2.2.0.exe`) to install properly.
+6. **Run the installer** (`GoldenMusicSetup-2.3.0.exe`) to install properly.
 
 ---
 
-## 👨‍💻 Run from Source (Development)
+## 👨‍💻 Run from Source (Development, Windows)
 
 If you want to run Golden Music without building an installer:
 
@@ -88,6 +89,105 @@ If you want to run Golden Music without building an installer:
    ```bash
    python main.pyw
    ```
+
+---
+
+## 🐧 Linux
+
+Golden Music 2.3 runs on Linux from source, and the full test matrix runs
+on Ubuntu in CI. There is no Linux installer yet (see *Linux packaging*
+below).
+
+### 1. System packages (Debian/Ubuntu)
+
+Qt needs a few system libraries, plus a running audio server:
+
+```bash
+sudo apt install libegl1 libgl1 libxkbcommon0 libdbus-1-3 libfontconfig1
+# audio — most modern desktops already have one of these:
+sudo apt install pipewire pipewire-pulse   # or: pulseaudio
+```
+
+(On Fedora/Arch the same libraries exist under similar names —
+`libglvnd`/`mesa-libGL`, `libxkbcommon`, `dbus-libs`, `fontconfig`.)
+
+### 2. Install Python dependencies
+
+```bash
+git clone https://github.com/Amirmpm/golden-music.git
+cd golden-music
+pip install -r requirements.txt
+```
+
+`pywin32` is Windows-only and is skipped automatically on Linux.
+
+### 3. Optional extras
+
+| Extra | Install | Unlocks |
+|---|---|---|
+| `miniaudio` | `pip install miniaudio` | Waveform seekbar + spectrum analyzer |
+| libmpv engine | `pip install python-mpv` **and** the system `libmpv` (e.g. `apt install libmpv2` — package name varies by distro/release) | 10-band equalizer, silence skipping, pitch-preserving speed — the mpv engine is auto-detected at startup and the Qt engine is used otherwise |
+| `qrcode` | `pip install qrcode` | QR pairing page for the Web Remote (falls back to a plain text token) |
+| `dbus-python` | `pip install dbus-python` | MPRIS media controls (desktop media keys / lock screen controls — optional, auto-detected) |
+
+All extras degrade gracefully — the app never *requires* any of them.
+
+### 4. Run
+
+```bash
+python main.pyw
+```
+
+### Linux packaging
+
+PyInstaller one-dir builds work on Linux (`pyinstaller goldenmusic.spec` —
+the same spec used on Windows). Official distro packages (deb/rpm), an
+AppImage or a Flatpak are **not shipped yet** — they are a great
+community-contribution opportunity; please open an issue if you'd like to
+work on one.
+
+---
+
+## 📱 Android (status: not shipped)
+
+Golden Music does not run on Android today — and **PyQt6 has no Android
+support**, so there is no shortcut. The realistic route, documented for
+contributors who want to attempt it:
+
+- **PySide6** (Qt for Python) ships official Android support and works with
+  **python-for-android** or Qt Creator's *Deploy to Android* device kits
+- Porting would mean swapping the PyQt6 import surface for PySide6 (small
+  but wide), plus touch-first variants of the dense desktop controls
+- The codebase is already prepared in two ways: every OS touchpoint lives
+  behind the `gm/platforms.py` abstraction layer, and there are no hard
+  `win32` dependencies outside guarded, Windows-only modules
+
+Recommendation: track upstream Qt for Python Android support and open a
+discussion issue before starting — it is a large but well-scoped project.
+
+---
+
+## ✍️ Code Signing (optional, Windows)
+
+Windows builds can be Authenticode-signed. Signing is **fully optional** —
+unsigned builds remain valid — and this project never fakes or bypasses
+signing.
+
+- **CI (GitHub secrets):** `WINDOWS_CERTIFICATE` — the `.pfx` certificate,
+  base64-encoded — and `WINDOWS_CERTIFICATE_PASSWORD`
+- **Local builds:** set `GOLDENMUSIC_CERT_FILE` (path to the `.pfx`) and
+  `GOLDENMUSIC_CERT_PASSWORD`
+- `signtool` must be on `PATH` (it ships with the Windows SDK)
+- Signatures are timestamped via DigiCert's public RFC 3161 server, so they
+  remain valid after the certificate itself expires
+
+`build_release.py` signs `GoldenMusic.exe` automatically whenever a
+certificate is configured; the installer then bundles the signed exe.
+
+**Honest note:** unsigned builds trigger Windows SmartScreen's "unknown
+publisher" warning until enough installs build reputation over time — that
+is expected behavior, not a bug, and installing anyway is safe when the
+download comes from this project's Releases.
 
 ---
 
@@ -117,7 +217,7 @@ golden-music\
 │   │                   ├── platforms\
 │   │                   └── styles\
 │   └── installer\
-│       └── GoldenMusicSetup-2.2.0.exe      # The installer
+│       └── GoldenMusicSetup-2.3.0.exe      # The installer
 └── ...
 ```
 
@@ -157,6 +257,22 @@ set "ISCC_EXE=YOUR_PATH\iscc.exe"
 - Try playing an MP3 first (most universally supported)
 - For FLAC/OGG, install "Web Media Extensions" from Microsoft Store
 - Check system tray for error notifications
+- **On Linux:** make sure PipeWire or PulseAudio is running
+  (`pipewire` or `pulseaudio` processes)
+
+### Equalizer / silence-skip / pitch-preserving speed unavailable
+
+Those features need the optional **mpv engine**. Install the system `libmpv`
+and `pip install python-mpv`, then restart the app — the engine is
+detected automatically and the Qt engine is used otherwise (gapless and
+crossfade work on both engines).
+
+### Waveform seekbar or spectrum analyzer missing
+
+Install the optional `miniaudio` extra (`pip install miniaudio`) and
+restart — the waveform seekbar falls back to a plain seekbar (toggle in
+Settings → Playback) and the spectrum hides itself when no decoder is
+available.
 
 ### App disappears when clicking X
 
@@ -172,7 +288,8 @@ That's intended — Golden Music minimizes to the system tray.
 ### Program runs but is unstable
 
 1. Make sure you have the latest version from [Releases](../../releases)
-2. Delete the config folder and restart:
+2. Back up your music library data if you need it (`~/.goldenmusic/library.db`)
+   and delete the config folder, then restart:
    ```bash
    rmdir /s %USERPROFILE%\.goldenmusic
    ```
@@ -182,21 +299,31 @@ That's intended — Golden Music minimizes to the system tray.
 
 ## 📁 Configuration Location
 
-Golden Music stores its data at:
+Golden Music stores its data at `%USERPROFILE%\.goldenmusic\` on Windows
+(`~/.goldenmusic/` on Linux):
 
 ```
-%USERPROFILE%\.goldenmusic\
-├── config.json          # Settings, library, favorites
-├── tag_cache.json       # Cached metadata for instant loading
-├── stats.json           # Listening statistics
-├── backups/             # Automatic config backups on startup
+~/.goldenmusic/
+├── library.db           # SQLite library: tracks, tags, FTS index, favorites,
+│                        #   playlists, ratings, play history, bookmarks,
+│                        #   radio stations, waveform cache
+├── config.json          # Settings & preferences
+├── lyrics_cache/        # Cached lyrics
+├── backups/             # Automatic backups (incl. pre_sqlite_<timestamp>/)
 └── goldenmusic.log      # Rotating diagnostics log
 ```
 
-**To reset to defaults:** Delete this folder and restart the app.
+**To reset to defaults:** delete this folder and restart the app — note that
+this also removes `library.db` (your library), so copy it somewhere safe
+first if you might want it back.
 
 *Portable mode:* if a `goldenmusic_config.json` sits next to the executable
 (or `main.pyw`), the app stores everything in that folder instead.
+
+**Upgrading from 2.x:** the first 3.0 start backs up your legacy JSON files
+into `backups/pre_sqlite_<timestamp>/` and migrates them into `library.db`
+in one atomic, row-count-verified, rollback-safe transaction — the original
+files are never deleted, and a 2.x downgrade keeps working.
 
 ---
 

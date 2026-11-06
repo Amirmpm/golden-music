@@ -5,6 +5,185 @@ All notable changes to Golden Music will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-11-06
+
+A landmark release: the whole app moved into a proper `gm/` package, the
+library now lives in an SQLite database with full-text search, every screen
+was redesigned, and playback gained a real engine layer with true gapless
+and crossfade. Golden Music is now developed and CI-tested on **Windows and
+Linux**.
+
+> The release originally developed as "3.0.0" ships as **2.3.0** — the
+> same content, a calmer version number.
+
+### Added
+
+#### Foundation
+- **`gm/` package architecture** — the 5,931-line `main.pyw` was split into
+  a package (`core`, `window`, `pages`, `workers`, `db`, `store`,
+  `player_adapter`, `audio_engines`, `lyrics_*`, `webremote`, `telegrambot`,
+  `mpris`, `platforms`, `i18n`, `prefs`, `dynamic_theme`, `m3u`, `smart`,
+  `migration`, `audio_tap`, `equalizer`, `normalize`, `crossfade`,
+  `waveform`, `spectrum`, `silence_skip`, `rating_tags`, `remote_bridges`,
+  `lyrics_flow`, `theme_qss` + a `gm/ui/` widget subpackage). `main.pyw` is
+  now a thin double-click entry; `main.py` is an importable shim with the
+  v2 module surface.
+- **SQLite library database** (`library.db`, WAL mode) with **FTS5
+  full-text search** over title/artist/album/genre — diacritics-folded,
+  prefix queries, millisecond results, designed for 100k+ track libraries.
+- **Verified JSON → SQLite migration** — on the first 2.3 start the legacy
+  `config.json` / `tag_cache.json` / `stats.json` are backed up into
+  `backups/pre_sqlite_<timestamp>/` and migrated in one atomic transaction
+  with row-count verification. Idempotent; on *any* failure the app rolls
+  back and runs the whole session in legacy JSON mode; the original JSON
+  files are never deleted (a 2.x downgrade keeps working). Settings stay in
+  `config.json`.
+- **Cross-platform layer** (`gm/platforms.py`) centralizing every OS
+  touchpoint; the full test matrix now runs on Windows **and** Linux in CI.
+  Windows-first features degrade gracefully elsewhere.
+
+#### Design & UX
+- **New brand icon** — a black-and-gold "G" mark with an equalizer halo;
+  shipped as the app / tray / taskbar / installer icon in every size
+  (16–256 px PNG + multi-size `.ico`, palette-quantized to keep the
+  installer lean).
+- **Tray popup volume & seek** — the system-tray flyout now has a real
+  progress bar (elapsed / total labels, click-to-seek and drag-scrub) and
+  a volume row (slider + mute toggle). They share the player's single
+  volume/seek code paths, stay live-synced while the popup is open, and
+  disable themselves safely for streams. Covered by `test_tray_av`
+  (21 checks incl. echo-loop and real mouse-event tests).
+- **Full visual redesign** — a new QSS design system (`gm/theme_qss.py`):
+  typography scale, 10 px radii, layered surfaces, hover/press states
+  everywhere, modern scrollbars, menus, tooltips, tabs and tables. All 12
+  psychology themes kept (plus Auto theme).
+- **New labeled sidebar** with count badges, collapse mode and an overflow
+  "More" menu (duplicates / backup / export).
+- **Lightweight animations** (fade / slide / stagger / pulse) with a
+  "Reduce animations" setting for motion-sensitive setups.
+- **Command Palette** (`Ctrl+K`) — every app command plus fuzzy search of
+  tracks and albums.
+- **Rebindable keyboard shortcuts** with conflict detection and reset
+  (Settings → Shortcuts).
+- **UI Scale setting** (0.75×–1.5×).
+- **Rebuilt Settings dialog** — 10 categories (Appearance / Playback /
+  Audio & EQ / Library / Lyrics / Stats / Integrations / Shortcuts /
+  Advanced / About) with live search across all settings rows.
+- **Dynamic Material You-style theme** extracted from the current album
+  cover (optional).
+- Better empty states and skeleton loading rows.
+
+#### Library
+- **Track list reimagined** — classic rows or a virtual table view with
+  user-selectable columns (#, Title, Artist, Album, Genre, Duration,
+  Rating, Bitrate, Plays, File), a density setting, and progressive
+  rendering (60 items per tick) that keeps huge libraries smooth.
+- **Albums page rebuilt** — grid/list modes, search and sorting, and an
+  album detail view with a big cover + Play All / Shuffle. New **Artists**
+  and **Genres** pages with cards/chips and detail views.
+- **Favorites with user-defined categories** (stored in the database).
+- **Smart playlists** — Most Played / Recently Added / Never Played / Not
+  Heard Recently / Top Rated — strictly opt-in via settings checkboxes.
+- **1–5 star ratings** stored in the app database *and* written to file
+  tags where the format supports it (POPM / Vorbis / MP4).
+- **M3U / M3U8 import & export** with relative or absolute paths.
+- **Live folder watching** (QFileSystemWatcher, debounced, configurable).
+- **Up Next queue upgrades** — drag-and-drop reordering, multi-select,
+  bulk Play Next and send-to-playlist.
+
+#### Playback
+- **Audio engine layer** — an optional libmpv engine (python-mpv) with
+  automatic fallback to the Qt engine; the player degrades gracefully when
+  libmpv is absent.
+- **REAL gapless playback and REAL crossfade** (0–12 s, equal-power curves)
+  via a dual-engine coordinator that works on *any* engine.
+- **10-band equalizer** with presets (Flat / Bass Boost / Rock / Night /
+  Vocal / Treble Boost / Custom) — requires the mpv engine and is clearly
+  labeled as such.
+- **Loudness normalization** from ReplayGain tags (optional; analysis is
+  cached).
+- **Pitch-preserving playback speed** on the mpv engine (the Qt engine uses
+  the platform rate).
+- **Optional silence skipping** (mpv engine).
+- **Bookmarks / resume for long files** (audiobooks) — automatic.
+- **Internet radio & URL streams**, including M3U/HLS playlists, with
+  saved stations.
+- **Waveform seekbar** — peaks generated in the background via optional
+  miniaudio and cached in SQLite; a plain seekbar toggle lives in Settings.
+- **Real FFT spectrum analyzer** — 20 log-spaced bands computed from the
+  actual decoded audio (content-driven analysis, see
+  `docs/DECISIONS.md` #d8); hides itself when no decoder is available.
+
+#### Lyrics
+- **Much stronger lyric search** — filename/tag cleanup (leading track
+  numbers like `01 vaveyla`, underscores, site spam, quality tags),
+  Windows-1256 mojibake repair, Persian/Arabic normalization, fuzzy
+  matching with duration proximity, and multi-variant queries with
+  early-exit. Provider: lrclib.net built-in + injectable.
+- **Quality detection** — too-short / spam / URL-laden lyrics are flagged
+  with a warning bar; better lyrics found online are only saved after
+  explicit confirmation.
+- **Per-track manual offset** (remembered) and a full lyrics editor (plain
+  text + LRC timing).
+- **Save to file tag and/or `.lrc` sidecar** — the user's choice.
+- **Bilingual by-line translations** (sidecar or inline) with RTL-correct
+  rendering.
+- **Floating desktop lyrics widget** (draggable, lockable, click-through)
+  and a mini lyrics bar.
+- **Persian UI language option + RTL layout** (i18n infrastructure in
+  `gm/i18n.py`).
+
+#### Stats
+- **Charts** — plays-over-time line, minutes-per-month bars, top
+  artists/genres bars; expandable top tracks (10 → 100) with Play and ♥
+  per row; a daily listening heatmap; and a yearly Wrapped-style report
+  with shareable text export.
+
+#### Integrations
+- **OS media controls** — Windows SMTC via the WMF backend plus the
+  existing global media keys; Linux MPRIS over dbus (optional); macOS
+  falls back to media keys.
+- **Web Remote** — a LAN web server built on the standard library with
+  token authentication (constant-time compare), a QR pairing page, a
+  mobile-friendly offline single-page UI and rate limiting. **Off by
+  default.**
+- **Telegram bot remote** — `/play /pause /next /prev /status /volume
+  /search /list` with allow-listed user IDs; the user supplies the token.
+  **Off by default.**
+
+### Changed
+- **Update check** (kept from 2.x) now lives under Settings →
+  Integrations.
+- **Code signing (optional)** — Authenticode signing is wired into
+  `build_release.py` and CI (secrets `WINDOWS_CERTIFICATE` base64 PFX +
+  `WINDOWS_CERTIFICATE_PASSWORD`); unsigned builds remain fully valid.
+- **requirements.txt** — the hard dependencies are unchanged (PyQt6,
+  mutagen, pywin32 on Windows); the new optional extras (miniaudio,
+  python-mpv, qrcode, dbus-python) are documented and all degrade
+  gracefully when missing.
+- **New `docs/DECISIONS.md`** — an architecture decision log for the
+  non-obvious 2.3 choices.
+- **Android** — not shipped in 2.3.0; the recommended route (PySide6 +
+  Qt for Android) is documented in INSTALLATION.md.
+
+### Testing
+- **24 suites in CI** (was 12): all 12 v2 suites kept green plus
+  `test_sqlite` (79 checks), `test_store_boot` (21), `test_audio_engines`
+  (55), `test_lyrics3` (128), `test_remote` (149), `test_m3u` (17),
+  `test_ui_components` (27), `test_settings3` (65), `test_pages3` (96),
+  `test_stats3` (73), `test_lyrics_ui` (18), `test_tray_av` (21).
+- CI now runs a Windows matrix (Python 3.12/3.13) **plus an Ubuntu matrix
+  job** (offscreen Qt), Bandit and the build pipeline.
+
+### Upgrade notes
+- **Windows installer upgrades preserve everything** — library, favorites,
+  playlists, ratings, stats and settings carry over; the first 2.3 start
+  performs the backed-up, verified, rollback-safe JSON → SQLite migration
+  described above.
+- Linux users can run from source (see INSTALLATION.md); optional extras
+  unlock the EQ/crossfade/silence-skip (libmpv) and waveform/spectrum
+  (miniaudio) features.
+
 ## [2.2.0] - 2026-10-16
 
 ### Added
@@ -425,6 +604,6 @@ The first stable, production-ready version of Golden Music!
 
 <div align="center">
 
-**Golden Music v2.2.0** — Psychology Theme Suite 🎨
+**Golden Music v2.3.0** — SQLite engine · v3 design system 🚀
 
 </div>

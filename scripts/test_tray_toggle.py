@@ -18,16 +18,8 @@ import testenv as _testenv
 _testenv.install()
 del _testenv
 
-# main.pyw: load by explicit loader — '.pyw' is a source suffix on
-# Windows but not on POSIX, so 'import main' is not portable.
-import importlib.util as _ilu
-from importlib.machinery import SourceFileLoader as _SFL
-
-REPO = Path(__file__).resolve().parent.parent
-_main_loader = _SFL("main", str(REPO / "main.pyw"))
-_main_spec = _ilu.spec_from_loader("main", _main_loader)
-main = _ilu.module_from_spec(_main_spec)
-_main_loader.exec_module(main)
+# v3.0: main.py is a real importable shim module (works on POSIX too).
+import main as main
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication

@@ -70,6 +70,51 @@ def run(cmd, **kw):
     return subprocess.run(cmd, cwd=ROOT, check=True, **kw)
 
 
+def sign_file(path) -> bool:
+    """Authenticode-sign `path` when a certificate is available.
+
+    Sources (first match wins):
+      * env GOLDENMUSIC_CERT_FILE + GOLDENMUSIC_CERT_PASSWORD (local builds)
+      * env WINDOWS_CERTIFICATE (base64 PFX) + WINDOWS_CERTIFICATE_PASSWORD
+        (CI secrets; same names the release workflow uses)
+
+    Timestamps via DigiCert's public RFC 3161 server. Returns True when a
+    signature was produced; False (with a log line) otherwise — unsigned
+    builds remain valid, this never fakes or bypasses signing.
+    """
+    import base64
+    cert_file = os.environ.get("GOLDENMUSIC_CERT_FILE")
+    password = os.environ.get("GOLDENMUSIC_CERT_PASSWORD") or \
+        os.environ.get("WINDOWS_CERTIFICATE_PASSWORD")
+    b64 = os.environ.get("WINDOWS_CERTIFICATE")
+    tmp_pfx = None
+    try:
+        if not cert_file and b64:
+            tmp_pfx = ROOT / "_sign_cert.pfx"
+            tmp_pfx.write_bytes(base64.b64decode(b64))
+            cert_file = str(tmp_pfx)
+        if not (cert_file and password):
+            print("sign: no certificate configured - building unsigned "
+                  "(see INSTALLATION.md 'Code signing')")
+            return False
+        exe = shutil.which("signtool")
+        if not exe:
+            print("sign: signtool not on PATH - skipping (install the "
+                  "Windows SDK, or sign in CI)")
+            return False
+        run([exe, "sign", "/fd", "SHA256",
+             "/tr", "http://timestamp.digicert.com", "/td", "SHA256",
+             "/f", cert_file, "/p", password, str(path)])
+        print(f"sign: signed {path}")
+        return True
+    finally:
+        if tmp_pfx is not None and tmp_pfx.exists():
+            try:
+                tmp_pfx.unlink()
+            except OSError:
+                pass
+
+
 def main():
     # 1. Clean previous output
     for d in ("build", "dist"):
@@ -117,6 +162,13 @@ def main():
     print(f"smoke exit={proc.returncode} in {dt:.1f}s\n{tail}")
     if proc.returncode != 0:
         raise SystemExit(f"SMOKE FAILED (exit {proc.returncode}) — see above")
+
+    # 5. Code signing (only when a certificate is configured — see
+    #    sign_file docstring; unsigned builds are a normal outcome)
+    try:
+        sign_file(exe)
+    except Exception as e:
+        print(f"sign: failed ({e}) - continuing unsigned")
 
     size_mb = sum(f.stat().st_size for f in DIST.rglob("*") if f.is_file()) / 1e6
     print(f"\nBuild OK: {exe}")
