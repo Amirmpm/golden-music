@@ -165,6 +165,22 @@ class MainWindow(QMainWindow):
         self.audio.error_occurred.connect(self._on_audio_error)
         self.audio.track_finished.connect(self._on_track_finished)
 
+        # v3: engine-backed player adapter (mpv preferred, Qt fallback;
+        # degrades to the legacy AudioBackend when neither engine loads).
+        try:
+            from gm.player_adapter import PlayerAdapter
+            order = ("mpv", "qt")
+            if self.prefs.get("audio_engine") == "qt":
+                order = ("qt",)
+            self.audio = PlayerAdapter(self, engine_order=order)
+            self.audio_v3 = self.audio
+        except Exception:
+            log.exception("PlayerAdapter failed; legacy AudioBackend")
+            self.audio = AudioBackend(self)
+            self.audio_v3 = None
+        self.audio.set_next_provider(self._peek_next_path)
+        self.audio.swapped_to.connect(self._on_gapless_swap)
+
         # Playback effects: speed / A-B repeat / fade
         from playback_fx import PlaybackFX
         self.fx = PlaybackFX(self.audio)
@@ -243,8 +259,20 @@ class MainWindow(QMainWindow):
         # Faster tick for A-B repeat precision (100 ms)
         self._fx_timer = QTimer(self)
         self._fx_timer.setInterval(100)
-        self._fx_timer.timeout.connect(lambda: getattr(self, "fx", None) and self.fx.tick())
+        self._fx_timer.timeout.connect(self._on_fx_tick)
         self._fx_timer.start()
+
+    def _on_fx_tick(self):
+        try:
+            if getattr(self, "fx", None):
+                self.fx.tick()
+        except Exception:
+            pass
+        try:
+            if getattr(self, "audio_v3", None) is not None:
+                self.audio_v3.tick()
+        except Exception:
+            pass
 
         # Keyboard shortcuts
         self._setup_shortcuts()
@@ -1092,15 +1120,21 @@ class MainWindow(QMainWindow):
         self.player_bar.vol_slider.setValue(v)
 
     def _early_load_theme(self):
-        """Synchronously read just the theme key from the config file.
+        """Synchronously read the theme + prefs keys from the config file.
         Tiny local-JSON read (~µs) that lets _build_ui() paint with the
         user's saved theme instead of the DEFAULT dark one — the root fix
-        for light themes starting life with stale dark-theme inline colors."""
+        for light themes starting life with stale dark-theme inline colors.
+        v3: prefs ride along so the audio engine choice + UI scale are known
+        before the player/bar are constructed."""
         try:
             cfg, ok = load_json_file(config_path(), "config")
-            if ok and isinstance(cfg, dict) and cfg.get("theme"):
-                self.theme_name = Theme.normalize(str(cfg["theme"]))
-                self.theme = Theme.get(self.theme_name)
+            if ok and isinstance(cfg, dict):
+                if cfg.get("theme"):
+                    self.theme_name = Theme.normalize(str(cfg["theme"]))
+                    self.theme = Theme.get(self.theme_name)
+                if isinstance(cfg.get("prefs"), dict):
+                    from gm.prefs import merge_prefs
+                    self.prefs = merge_prefs(cfg["prefs"])
         except Exception as e:
             log.debug(f"early theme load skipped: {e}")
 
@@ -1174,8 +1208,34 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+    def _apply_theme_dict(self, t: dict):
+        """Apply a theme dict in place (used by the dynamic album theme)."""
+        if not t:
+            return
+        self.theme = dict(t)
+        try:
+            from gm.theme_qss import build_qss_v3
+            qss = build_qss_v3(self.theme,
+                               scale=float(self.prefs.get("ui_scale", 1.0)))
+        except Exception:
+            qss = build_qss(self.theme)
+        app_inst = QApplication.instance()
+        if app_inst is not None:
+            app_inst.setStyleSheet(qss)
+        self.setStyleSheet(qss)
+        self._sync_app_palette()
+        if hasattr(self, "rail"):
+            self.rail.set_theme(self.theme)
+        if hasattr(self, "player_bar"):
+            self.player_bar.set_theme(self.theme)
+
     def _apply_theme(self):
         self.theme = Theme.get(self.theme_name)
+        # v3: dynamic album-cover theme overrides the base palette while
+        # enabled (transient — never persisted as the user's theme choice)
+        if self.prefs.get("dynamic_album_theme", False) and \
+                getattr(self, "_dynamic_theme", None):
+            self.theme = dict(self._dynamic_theme)
         theme_changed = (getattr(self, "_last_theme", None) or {}).get("name") \
             != self.theme.get("name")
         # v3 design system QSS (typography scale + modern components);
@@ -2725,6 +2785,7 @@ class MainWindow(QMainWindow):
         self._highlight_playing_in_lists()
         # Load and play immediately (simplified audio backend)
         self.audio.set_volume(self.player_bar.vol_slider.value())
+        self._start_track_analytics(path)
         self.audio.load_and_play(path)
         if getattr(self, "fx", None):
             self.fx.fade_in_from_silence()
@@ -3064,6 +3125,7 @@ class MainWindow(QMainWindow):
         # Ignore results from an outdated load (fast track switching).
         if path != getattr(self, "_cover_request", None) or path != self.current_track:
             return
+        self._last_cover_pm = None
         if data is None:
             self.cover_label.set_cover(None)
             self.fav_cover.set_cover(None)
@@ -3086,6 +3148,26 @@ class MainWindow(QMainWindow):
             self.tray_menu_widget.update_now_playing(title, artist, pm)
         if self.mini_player and self.mini_player.isVisible() and self.current_track:
             self.mini_player.update_track(*self._current_track_tags(), pm)
+        # v3: remember for the web-remote bridge / dynamic theme
+        self._last_cover_pm = pm
+        try:
+            if self.prefs.get("dynamic_album_theme", False) and pm is not None:
+                self._maybe_apply_dynamic_theme(pm)
+        except Exception:
+            pass
+
+    def _maybe_apply_dynamic_theme(self, pm):
+        """Material You-style accent extraction from the current cover.
+        Applied as a transient theme overlay (never persisted)."""
+        try:
+            from gm.dynamic_theme import theme_from_cover
+            t = theme_from_cover(pm, self.theme,
+                                 dark=bool(self.theme.get("is_dark", True)))
+            if t:
+                self._dynamic_theme = t
+                self._apply_theme_dict(t)
+        except Exception:
+            log.exception("dynamic theme failed")
 
     def _on_play_pause(self):
         if self.current_track is None:
@@ -3559,6 +3641,13 @@ class MainWindow(QMainWindow):
                 self.stats.add_seconds(0.5)
             if self.current_track is not None:
                 self._listened_ms = getattr(self, "_listened_ms", 0) + 500
+            # v3: bookmark autosave for long files (every ~5 s of ticks)
+            self._bm_tick = getattr(self, "_bm_tick", 0) + 1
+            if self._bm_tick >= 10:
+                self._bm_tick = 0
+                self._bookmark_autosave()
+            # v3: start the spectrum tap once playback truly advances
+            self._maybe_begin_tap(pos)
         # Toast notification when the window is hidden
         if getattr(self, "_toast_enabled", True):
             self._maybe_toast_track_change()
@@ -3751,6 +3840,31 @@ class MainWindow(QMainWindow):
             # notification spam (and invisible anyway once hidden).
 
     def closeEvent(self, e):
+        # v3.0: stop background remotes + analysis threads on ANY close path
+        try:
+            from gm.remote_bridges import stop_all as _stop_remotes
+            _stop_remotes()
+        except Exception:
+            pass
+        for _attr in ("_content_tap", "_waveform_worker"):
+            _t = getattr(self, _attr, None)
+            if _t is not None:
+                try:
+                    _t.stop_tap()
+                except AttributeError:
+                    pass
+                try:
+                    _t.cancel()
+                except AttributeError:
+                    pass
+                if _t.isRunning():
+                    _t.wait(1500)
+        _fw = getattr(self, "_floating_lyrics_w", None)
+        if _fw is not None:
+            try:
+                _fw.close()
+            except Exception:
+                pass
         if self._force_quit:
             self._save_config()
             if self.scanner is not None and self.scanner.isRunning():
@@ -4800,6 +4914,215 @@ class MainWindow(QMainWindow):
         except Exception:
             log.exception("floating lyrics apply failed")
 
+
+    # ------------------------------------------------------------------
+    # v3.0 — gapless handoff, waveform seekbar, spectrum tap, bookmarks
+    # ------------------------------------------------------------------
+    def _peek_next_path(self):
+        """What the queue logic WILL play next (no side effects) — used to
+        arm gapless/crossfade preload."""
+        try:
+            if not self.current_playlist:
+                return None
+            if self.repeat_mode == RepeatMode.ONE:
+                return self.current_track
+            if self.shuffle:
+                pool = [p for p in self.shuffle_unplayed
+                        if p in self.current_playlist and p != self.current_track]
+                if pool:
+                    return pool[0]
+                others = [p for p in self.current_playlist
+                          if p != self.current_track]
+                return others[0] if others else None
+            nxt = self.current_index + 1
+            if 0 <= nxt < len(self.current_playlist):
+                return self.current_playlist[nxt]
+            if self.repeat_mode == RepeatMode.ALL and self.current_playlist:
+                return self.current_playlist[0]
+        except Exception:
+            pass
+        return None
+
+    def _on_gapless_swap(self, path):
+        """The adapter finished the dual-engine handoff: adopt the new track
+        WITHOUT reloading audio (that is the whole point of gapless)."""
+        try:
+            if not path:
+                return
+            self._finalize_listen_credit()
+            self._listened_ms = 0
+            if getattr(self, "fx", None):
+                self.fx.clear_ab()
+            self.current_track = path
+            try:
+                self.current_index = self.current_playlist.index(path)
+            except ValueError:
+                self.current_index = -1
+            self.shuffle_unplayed.discard(path)
+            self._push_history(path)
+            title, artist = self._tag_cache.get(
+                path, (os.path.splitext(os.path.basename(path))[0], ""))
+            self.now_title.setMarqueeText(title)
+            self.now_artist.setMarqueeText(artist)
+            self.player_bar.title_label.setMarqueeText(title)
+            self.player_bar.artist_label.setMarqueeText(artist)
+            self.player_bar.update_like_button(path in self.favorites)
+            self._load_cover_async(path)
+            self._highlight_playing_in_lists()
+            self._maybe_toast_track_change()
+            self._start_track_analytics(path)
+        except Exception:
+            log.exception("gapless swap UI adoption failed")
+
+    def _start_track_analytics(self, path):
+        """Per-track setup: normalization gain, waveform, spectrum tap,
+        bookmark resume. Called for every track start (incl. gapless swaps)."""
+        try:
+            if not path or str(path).startswith(("http://", "https://")):
+                return
+            # --- loudness normalization (ReplayGain tags) ---
+            try:
+                if self.prefs.get("normalization", "off") == "tags" and \
+                        getattr(self, "audio_v3", None) is not None:
+                    from gm.normalize import Normalizer, read_replaygain_tags
+                    tags = read_replaygain_tags(path)
+                    gain = None
+                    if tags.get("track_gain_db") is not None:
+                        gain = tags["track_gain_db"]
+                    elif tags.get("album_gain_db") is not None:
+                        gain = tags["album_gain_db"]
+                    if gain is not None:
+                        self.audio_v3.set_track_gain_db(float(gain))
+                    else:
+                        self.audio_v3.set_track_gain_db(0.0)
+            except Exception:
+                pass
+            # --- waveform seekbar ---
+            try:
+                self._start_waveform_for(path)
+            except Exception:
+                pass
+            # --- spectrum tap ---
+            try:
+                self._start_spectrum_tap(path)
+            except Exception:
+                pass
+            # --- bookmark resume ---
+            try:
+                self._maybe_resume_bookmark(path)
+            except Exception:
+                pass
+        except Exception:
+            log.exception("track analytics failed")
+
+    def _start_waveform_for(self, path):
+        if not self.prefs.get("waveform_seekbar", True):
+            self.player_bar.seek_slider.clear_peaks()
+            return
+        worker = getattr(self, "_waveform_worker", None)
+        if worker is not None and worker.isRunning():
+            worker.cancel()
+            worker.wait(500)
+        from gm.audio_tap import WaveformWorker, HAVE_MINIAUDIO
+        if not HAVE_MINIAUDIO:
+            self.player_bar.seek_slider.clear_peaks()
+            self._waveform_unavailable = True
+            return
+        db = self.store.db if getattr(self, "store", None) is not None else None
+        self._waveform_worker = WaveformWorker(path, db, parent=self)
+        self._waveform_worker.peaks_ready.connect(self._on_peaks_ready)
+        self._waveform_worker.start()
+
+    def _on_peaks_ready(self, path, peaks):
+        try:
+            if self.current_track == path and peaks:
+                self.player_bar.seek_slider.set_peaks(peaks)
+            elif self.current_track == path:
+                self.player_bar.seek_slider.clear_peaks()
+        except Exception:
+            pass
+
+    def _start_spectrum_tap(self, path):
+        """Mark the tap as WANTED for this path; actual thread start waits
+        for genuinely advancing playback (see _ui_tick) — a stubbed or
+        non-playing backend never spawns the thread."""
+        if not self.prefs.get("visualizer_enabled", True):
+            return
+        self._tap_wanted = path
+        self._tap_progress = 0
+        self._tap_last_pos = -1
+
+    def _maybe_begin_tap(self, pos):
+        try:
+            wanted = getattr(self, "_tap_wanted", None)
+            if not wanted or getattr(self, "_content_tap", None) is not None:
+                return
+            last = getattr(self, "_tap_last_pos", -1)
+            prog = getattr(self, "_tap_progress", 0)
+            if last >= 0 and pos > last:
+                prog += 1
+            else:
+                prog = 0
+            self._tap_last_pos = pos
+            self._tap_progress = prog
+            if prog >= 3:
+                from gm.audio_tap import ContentTap
+                tap = ContentTap(self)
+                tap.spectrum_ready.connect(self._on_spectrum)
+                self._content_tap = tap
+                tap.start_tap(wanted,
+                              lambda: self.audio.position(),
+                              lambda: self.audio.state())
+        except Exception:
+            pass
+
+    def _on_spectrum(self, mags):
+        try:
+            viz = getattr(self.player_bar, "spectrum", None)
+            if viz is not None:
+                if mags is None:
+                    viz.hide()
+                    return
+                viz.set_magnitudes(mags)
+        except Exception:
+            pass
+
+    def _maybe_resume_bookmark(self, path):
+        if not self.prefs.get("bookmarks_enabled", True):
+            return
+        if getattr(self, "store", None) is None:
+            return
+        dur = self.audio.duration()
+        if not dur or dur < 10 * 60 * 1000:      # only long files
+            return
+        pos = self.store.db.get_bookmark(path)
+        if pos and pos > 5000:
+            self.audio.set_position(int(pos))
+            self._show_toast(f"Resumed at {fmt_time(pos)}")
+
+    def _bookmark_autosave(self):
+        try:
+            if not self.prefs.get("bookmarks_enabled", True):
+                return
+            if getattr(self, "store", None) is None or not self.current_track:
+                return
+            if str(self.current_track).startswith(("http://", "https://")):
+                return
+            dur = self.audio.duration()
+            if dur and dur >= 10 * 60 * 1000 and self.audio.state() == 1:
+                pos = self.audio.position()
+                if 5000 < pos < dur * 0.97:
+                    self.store.db.set_bookmark(self.current_track, int(pos))
+        except Exception:
+            pass
+
+    def _clear_bookmark(self, path):
+        try:
+            if getattr(self, "store", None) is not None and path:
+                self.store.db.delete_bookmark(path)
+        except Exception:
+            pass
+
     def _store_remove(self, paths):
         """Explicit removal from the SQLite store (v3.0). Called by every
         UI action that removes tracks/folders; _save_config's reconcile is
@@ -5276,6 +5599,19 @@ class MainWindow(QMainWindow):
         # 1500 ms that would race the shutdown.
         if not getattr(self, "_smoke", False):
             QTimer.singleShot(1500, self._preload_albums_background)
+
+        # v3 feature wiring once prefs + store are live
+        try:
+            self._apply_audio_prefs()
+            self._sync_smart_playlists()
+            self._apply_folder_watch()
+            if self.prefs.get("webremote_enabled", False) or \
+                    self.prefs.get("telegram_enabled", False):
+                self._apply_remote_prefs()
+            if self.prefs.get("floating_lyrics", False):
+                self._apply_floating_lyrics()
+        except Exception:
+            log.exception("v3 post-load wiring failed")
 
     def _restore_position(self, path, pos):
         if self.current_track == path:

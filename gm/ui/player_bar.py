@@ -69,7 +69,8 @@ class PlayerBar(QFrame):
         self.time_current.setObjectName("TimeLabel")
         self.time_current.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
-        self.seek_slider = ClickableSlider(Qt.Orientation.Horizontal)
+        from gm.ui.wave_bar import WaveformSeekbar
+        self.seek_slider = WaveformSeekbar()
         self.seek_slider.setObjectName("SeekSlider")
         self.seek_slider.setRange(0, 1000)
         self.seek_slider.setValue(0)
@@ -86,6 +87,13 @@ class PlayerBar(QFrame):
         seek_row.addWidget(self.time_current)
         seek_row.addWidget(self.seek_slider, 1)
         seek_row.addWidget(self.time_total)
+        # v3: real FFT spectrum analyzer (hidden until magnitudes arrive;
+        # see gm.audio_tap.ContentTap — no data -> stays hidden, zero cost)
+        from gm.ui.wave_bar import SpectrumVisualizer
+        self.spectrum = SpectrumVisualizer()
+        self.spectrum.setFixedWidth(150)
+        self.spectrum.hide()
+        seek_row.addWidget(self.spectrum)
         seek_w = QWidget()
         seek_w.setLayout(seek_row)
 
@@ -221,6 +229,10 @@ class PlayerBar(QFrame):
         self.set_theme(theme)
 
     def set_theme(self, theme: dict):
+        try:
+            self.spectrum.set_theme(theme)
+        except Exception:
+            pass
         self.theme = theme
         for btn in [self.like_btn, self.prev_btn, self.next_btn,
                     self.shuffle_btn, self.repeat_btn, self.vol_btn,
