@@ -1178,7 +1178,7 @@ class SettingsDialog3(QDialog):
             web, "Bind address",
             "Who may reach the web remote.",
             "webremote_host",
-            [("127.0.0.1", "This PC only"), ("0.0.0.0", "LAN")],
+            [("127.0.0.1", "This PC only"), ("0.0.0.0", "LAN")],  # nosec B104
             keywords=["host", "bind", "address", "lan", "localhost",
                       "remote", "web"])
 

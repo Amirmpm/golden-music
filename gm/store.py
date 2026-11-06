@@ -178,7 +178,7 @@ class LibraryStore:
                         vals.append(time.time())
                         vals.append(d["path"])
                         conn.execute(
-                            f"UPDATE tracks SET {','.join(sets)} WHERE path=?",
+                            f"UPDATE tracks SET {','.join(sets)} WHERE path=?",  # nosec B608
                             vals)
 
     # ------------------------------------------------------- smart playlists

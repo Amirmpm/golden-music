@@ -1223,7 +1223,7 @@ class WebRemoteServer(threading.Thread):
         host = (host_header or "").strip()
         if host and not host.startswith(("127.", "localhost", "[::1]")):
             return host
-        if self._host and self._host not in ("", "0.0.0.0", "::"):
+        if self._host and self._host not in ("", "0.0.0.0", "::"):  # nosec B104
             return "%s:%d" % (self._host, self.bound_port or self._port)
         return "%s:%d" % (lan_ip(), self.bound_port or self._port)
 

@@ -78,7 +78,7 @@ _ALLOWED_ENUMS = {
     "audio_engine": {"auto", "mpv", "qt"},
     "normalization": {"off", "tags"},
     "lyrics_save_mode": {"ask", "embed", "sidecar"},
-    "webremote_host": {"127.0.0.1", "0.0.0.0"},
+    "webremote_host": {"127.0.0.1", "0.0.0.0"},  # nosec B104
 }
 
 

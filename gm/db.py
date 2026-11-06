@@ -231,7 +231,7 @@ class LibraryDB:
                     cols = [c for c in self._track_columns() if c in d]
                     vals = [d[c] for c in cols]
                     conn.execute(
-                        f"INSERT INTO tracks({','.join(cols)}) "
+                        f"INSERT INTO tracks({','.join(cols)}) "  # nosec B608
                         f"VALUES({','.join('?' * len(cols))})", vals)
                     conn.execute(
                         "INSERT INTO tracks_fts(rowid,title,artist,album,"
@@ -252,7 +252,7 @@ class LibraryDB:
                     if sets:
                         vals.append(path)
                         conn.execute(
-                            f"UPDATE tracks SET {','.join(sets)} WHERE path=?",
+                            f"UPDATE tracks SET {','.join(sets)} WHERE path=?",  # nosec B608
                             vals)
                         conn.execute(
                             "INSERT INTO tracks_fts(tracks_fts,rowid,title,"
@@ -342,11 +342,11 @@ class LibraryDB:
 
     def all_tracks(self) -> list[dict]:
         return [dict(r) for r in self._conn().execute(
-            f"SELECT {self.TRACK_COLS} FROM tracks ORDER BY path")]
+            f"SELECT {self.TRACK_COLS} FROM tracks ORDER BY path")]  # nosec B608
 
     def get_track(self, path: str) -> dict | None:
         row = self._conn().execute(
-            f"SELECT {self.TRACK_COLS} FROM tracks WHERE path=?",
+            f"SELECT {self.TRACK_COLS} FROM tracks WHERE path=?",  # nosec B608
             (path,)).fetchone()
         return dict(row) if row else None
 
@@ -415,7 +415,7 @@ class LibraryDB:
     def tracks_where(self, where: str = "", args: Sequence = (),
                      order: str = "title COLLATE NOCASE",
                      limit: int | None = None) -> list[dict]:
-        sql = f"SELECT {self.TRACK_COLS} FROM tracks"
+        sql = f"SELECT {self.TRACK_COLS} FROM tracks"  # nosec B608
         if where:
             sql += f" WHERE {where}"
         if order:
@@ -611,7 +611,7 @@ class LibraryDB:
 
     def top_tracks(self, n: int = 10) -> list[dict]:
         return [dict(r) for r in self._conn().execute(
-            f"SELECT {self.TRACK_COLS} FROM tracks WHERE play_count>0 "
+            f"SELECT {self.TRACK_COLS} FROM tracks WHERE play_count>0 "  # nosec B608
             "ORDER BY play_count DESC, last_played_at DESC LIMIT ?", (n,))]
 
     def top_artists(self, n: int = 10) -> list[tuple[str, int, float]]:

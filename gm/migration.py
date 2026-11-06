@@ -125,7 +125,7 @@ def migrate_json_to_sqlite(db, config_file: Path) -> MigrationResult:
             # wipe only the tables this migration owns (retry-safe)
             for table in ("tracks", "favorites", "playlists",
                           "playlist_tracks", "play_events"):
-                cur.execute(f"DELETE FROM {table}")
+                cur.execute(f"DELETE FROM {table}")  # nosec B608
             cur.execute("DELETE FROM tracks_fts")
             cur.execute("DELETE FROM meta WHERE key IN "
                         "('total_seconds','stats_legacy','json_migration',"

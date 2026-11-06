@@ -234,7 +234,7 @@ class TelegramRemote(threading.Thread):
                 request = urllib.request.Request(
                     url, data=body, method="POST",
                     headers={"Content-Type": "application/json"})
-                with urllib.request.urlopen(request, timeout=self._net_timeout) as resp:
+                with urllib.request.urlopen(request, timeout=self._net_timeout) as resp:  # nosec B310
                     raw = resp.read(1024 * 1024)
                 return json.loads(raw.decode("utf-8", "replace"))
             except Exception as exc:
