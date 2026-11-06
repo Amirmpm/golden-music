@@ -2239,15 +2239,8 @@ class MainWindow(QMainWindow):
 
     def _open_file_location(self, path):
         """Reveal the track's file in the OS file manager."""
-        try:
-            if sys.platform == "win32":
-                subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
-            elif sys.platform == "darwin":
-                subprocess.Popen(["open", "-R", path])
-            else:
-                subprocess.Popen(["xdg-open", os.path.dirname(path)])
-        except Exception as e:
-            log.warning(f"Open file location failed: {e}")
+        from gm.platforms import open_file_location
+        open_file_location(path)
 
     def _show_track_properties(self, path):
         """Show the technical properties dialog for a track."""

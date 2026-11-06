@@ -188,31 +188,9 @@ def _install_crash_guard(app):
 
 def _enable_windows_glass(widget):
     """Best-effort Mica/Acrylic backdrop (Win 11 22H2+) + dark titlebar.
-    Falls back silently on older systems."""
-    if sys.platform != "win32":
-        return
-    try:
-        import ctypes
-        hwnd = int(widget.winId())
-        dwm = ctypes.windll.dwmapi
-        try:
-            DWMSBT_MAINWINDOW = 2
-            dwm.DwmSetWindowAttribute(hwnd, 38,
-                ctypes.byref(ctypes.c_int(DWMSBT_MAINWINDOW)), 4)
-        except Exception:
-            pass
-        try:
-            dwm.DwmSetWindowAttribute(hwnd, 20,
-                ctypes.byref(ctypes.c_int(1)), 4)   # dark chrome
-        except Exception:
-            pass
-        try:
-            margins = ctypes.c_int(-1)
-            dwm.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(margins))
-        except Exception:
-            pass
-    except Exception as e:
-        log.debug(f"glass backdrop unavailable: {e}")
+    Routed through the platform abstraction layer; no-op elsewhere."""
+    from gm.platforms import enable_windows_glass
+    enable_windows_glass(widget)
 
 
 def _audio_files_from_argv(argv: list) -> list:
