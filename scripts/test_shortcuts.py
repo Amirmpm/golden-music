@@ -18,6 +18,10 @@ import testenv as _testenv
 _testenv.install()
 del _testenv
 
+# Surface native teardown crashes with Python frames (see test_stability).
+import faulthandler
+faulthandler.enable()
+
 # v3.0: main.py is a real importable shim module (works on POSIX too).
 import main as main
 
@@ -137,7 +141,8 @@ le.close()
 w._force_quit = True
 w.close()
 app.processEvents()
+print("[teardown] window closed", flush=True)
 
 failed = sum(1 for ok_, *_ in results if not ok_)
-print(f"\nshortcuts: {len(results) - failed}/{len(results)} passed")
+print(f"\nshortcuts: {len(results) - failed}/{len(results)} passed", flush=True)
 sys.exit(1 if failed else 0)
