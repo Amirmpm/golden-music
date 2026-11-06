@@ -1,4 +1,4 @@
-"""Golden Music 3.0 — modern QSS design system.
+"""Golden Music 2.3 — modern QSS design system.
 
 build_qss_v3() restyles the whole application: refined typography scale,
 consistent 10px radii, layered surfaces, hover/press states everywhere,
@@ -397,8 +397,13 @@ QLineEdit#CommandInput {{
 QListWidget#CommandList {{
     background: transparent; border: none;
 }}
+/* NOTE: no vertical padding/margin here! QSS ::item padding+margin is
+   SUBTRACTED from every setItemWidget row's geometry — with vertical
+   insets the rows collapse (labels get 0 height, only icons show).
+   Horizontal-only margin keeps the inset selection bar; all vertical
+   rhythm lives inside the row/header widgets themselves. */
 QListWidget#CommandList::item {{
-    padding: 9px 12px; border-radius: 8px; margin: 1px 6px;
+    margin: 0 6px; border-radius: 8px;
 }}
 QListWidget#CommandList::item:selected {{ background: {active}; }}
 

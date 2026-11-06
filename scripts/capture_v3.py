@@ -162,6 +162,9 @@ def seed_store():
     """Rich demo data directly in the SQLite store (portable dir)."""
     st = w.store
     db = st.db
+    import random
+    rng = random.Random(7)
+    now = time.time()          # MUST precede its first use below (was after)
     # tags + ratings + play counts
     rows = []
     for i, path in enumerate(DEMO_LIBRARY):
@@ -187,9 +190,6 @@ def seed_store():
                          (r["play_count"], r["rating"],
                           now - r["play_count"] * 3600, r["path"]))
     # play events across the last 45 days for charts/heatmap
-    import random
-    rng = random.Random(7)
-    now = time.time()
     ev = []
     for i, path in enumerate(DEMO_LIBRARY):
         for k in range((rows[i]["play_count"] or 0)):
@@ -270,7 +270,11 @@ def next_step():
             if getattr(w, "_palette", None) is not None:
                 w._palette._input.setText("") if hasattr(
                     w._palette, "_input") else None
-                app.processEvents()
+                # rows stagger-animate in — wait on a REAL event loop so
+                # the timers complete before the grab (same as pages)
+                loop = QEventLoop()
+                QTimer.singleShot(800, loop.quit)
+                loop.exec()
                 pm = w._palette.grab()
                 pm.save(str(SHOTS / "v3_command_palette.png"))
                 pm.save(str(OUT / "v3_command_palette.png"))

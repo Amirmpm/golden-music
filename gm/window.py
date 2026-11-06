@@ -501,7 +501,14 @@ class MainWindow(QMainWindow):
                 pass
         self.radio_page = self._build_radio_page()            # 7 radio
         self.stack.addWidget(self.radio_page)
-        self.main_layout.addWidget(self.stack, 1)
+        # Content row: stack (stretch) + optional right-docked Up Next
+        # queue panel. Horizontal on purpose — the queue panel is a
+        # 300 px side panel (border-left), NOT a bottom strip.
+        self.content_row = QHBoxLayout()
+        self.content_row.setContentsMargins(0, 0, 0, 0)
+        self.content_row.setSpacing(0)
+        self.content_row.addWidget(self.stack, 1)
+        self.main_layout.addLayout(self.content_row, 1)
 
         top.addWidget(self.main_area, 1)
         outer.addLayout(top, 1)
@@ -1068,6 +1075,9 @@ class MainWindow(QMainWindow):
         self.tray_menu_widget.show_clicked.connect(self._toggle_visible)
         self.tray_menu_widget.close_clicked.connect(self.tray_menu_widget.close)
         self.tray_menu_widget.quit_clicked.connect(self._quit)
+        # v2.3: tray seek + volume controls
+        self.tray_menu_widget.seek_requested.connect(self._on_tray_seek)
+        self.tray_menu_widget.volume_changed.connect(self._on_tray_volume)
         # Right-click opens the CUSTOM styled popup (not the gray native
         # QMenu — Windows would render that with the old system theme).
         # Left/middle clicks keep their behaviors in _on_tray_activated.
@@ -2896,6 +2906,7 @@ class MainWindow(QMainWindow):
         self.player_bar.time_total.setText("0:00")
         self.player_bar.time_current.setText("0:00")
         self.player_bar.seek_slider.setValue(0)
+        self._tray_reset_progress()
         self.player_bar.update_like_button(path in self.favorites)
         self._load_cover_async(path)
         self._highlight_playing_in_lists()
@@ -3478,6 +3489,7 @@ class MainWindow(QMainWindow):
             self.player_bar.time_total.setText("0:00")
             self.player_bar.time_current.setText("0:00")
             self.player_bar.seek_slider.setValue(0)
+            self._tray_reset_progress()
             self.player_bar.update_like_button(path in self.favorites)
             self._load_cover_async(path)
             self._highlight_playing_in_lists()
@@ -3668,6 +3680,10 @@ class MainWindow(QMainWindow):
         if val > 0:
             self._last_volume = val
         self._save_config_debounced()
+        # v2.3: keep the tray popup's volume row in sync (echo-safe)
+        tmw = getattr(self, "tray_menu_widget", None)
+        if tmw is not None:
+            tmw.update_volume(val)
 
     def _on_mute_toggle(self):
         if self.player_bar.vol_slider.value() == 0:
@@ -3686,6 +3702,11 @@ class MainWindow(QMainWindow):
                 self.player_bar.seek_slider.setValue(int(pos * 1000 / dur))
                 self.player_bar.seek_slider.blockSignals(False)
             self.player_bar.time_current.setText(fmt_time(pos))
+            # v2.3: live-sync the tray popup while it is open (zero cost
+            # while hidden — full state is re-synced on every popup open)
+            tmw = getattr(self, "tray_menu_widget", None)
+            if tmw is not None and tmw.isVisible() and not tmw.is_seeking():
+                tmw.update_position(pos)
 
     def _on_duration_changed(self, dur):
         self.player_bar.time_total.setText(fmt_time(dur))
@@ -3696,6 +3717,10 @@ class MainWindow(QMainWindow):
                 self.player_bar.seek_slider.blockSignals(True)
                 self.player_bar.seek_slider.setValue(int(pos * 1000 / dur))
                 self.player_bar.seek_slider.blockSignals(False)
+        # v2.3: duration arrives rarely — always refresh the tray popup
+        tmw = getattr(self, "tray_menu_widget", None)
+        if tmw is not None:
+            tmw.update_duration(dur)
 
     def _on_state_changed(self, state):
         if state == AudioBackend.STATE_PLAYING:
@@ -3750,6 +3775,10 @@ class MainWindow(QMainWindow):
                 self.player_bar.seek_slider.blockSignals(False)
             self.player_bar.time_current.setText(fmt_time(pos))
             self._on_lyrics_position_tick(pos)
+            # v2.3: tray popup progress follows the 500 ms tick too
+            tmw = getattr(self, "tray_menu_widget", None)
+            if tmw is not None and tmw.isVisible() and not tmw.is_seeking():
+                tmw.update_position(pos)
         # Stats: accumulate listening time while playing (0.5 s per 500 ms
         # tick) + per-track listen metering for the 70% credit rule.
         if self.audio.state() == AudioBackend.STATE_PLAYING:
@@ -3822,6 +3851,44 @@ class MainWindow(QMainWindow):
         else:
             self.tray_menu_widget.update_now_playing()
 
+    def _tray_reset_progress(self):
+        """Clear the tray popup's progress row when a new track loads."""
+        tmw = getattr(self, "tray_menu_widget", None)
+        if tmw is not None:
+            tmw.update_duration(0)
+            tmw.update_position(0)
+
+    def _on_tray_seek(self, ms):
+        """Seek requested from the tray popup's progress bar."""
+        try:
+            if not self.current_track:
+                return
+            dur = self.audio.duration()
+            if dur > 0:
+                pos = int(max(0, min(dur, int(ms))))
+                self.audio.set_position(pos)
+                # Mirror onto the main player bar immediately (the position
+                # signal confirms it a moment later anyway)
+                self.player_bar.time_current.setText(fmt_time(pos))
+                self.player_bar.seek_slider.blockSignals(True)
+                self.player_bar.seek_slider.setValue(int(pos * 1000 / dur))
+                self.player_bar.seek_slider.blockSignals(False)
+        except Exception:
+            log.exception("tray seek failed")
+
+    def _on_tray_volume(self, val):
+        """Volume change from the tray popup. Routed through the ONE volume
+        path (_on_volume_changed) so audio, the main-bar slider, the mute
+        icon and the persisted config can never disagree."""
+        try:
+            val = int(max(0, min(100, int(val))))
+            self.player_bar.vol_slider.blockSignals(True)
+            self.player_bar.vol_slider.setValue(val)
+            self.player_bar.vol_slider.blockSignals(False)
+            self._on_volume_changed(val)
+        except Exception:
+            log.exception("tray volume failed")
+
     def _show_tray_popup(self):
         """Show the custom tray popup above the taskbar, near the cursor."""
         from PyQt6.QtGui import QCursor
@@ -3831,6 +3898,10 @@ class MainWindow(QMainWindow):
         playing = self.audio.state() == AudioBackend.STATE_PLAYING
         self.tray_menu_widget.update_play_state(playing)
         self._tray_sync_now_playing()
+        # v2.3: full progress + volume state sync every time it opens
+        self.tray_menu_widget.update_volume(self.player_bar.vol_slider.value())
+        self.tray_menu_widget.update_duration(self.audio.duration())
+        self.tray_menu_widget.update_position(self.audio.position())
         menu_size = self.tray_menu_widget.size()
         # X: centered on the cursor, clamped to the taskbar's screen
         for scr in QApplication.screens():
@@ -4856,9 +4927,17 @@ class MainWindow(QMainWindow):
             if getattr(self, "_queue_panel_w", None) is None:
                 from queue_panel import QueuePanel
                 self._queue_panel_w = QueuePanel(self, self)
-                self.main_layout.insertWidget(
-                    self.main_layout.indexOf(self.stack) + 1,
-                    self._queue_panel_w)
+                # Dock on the RIGHT of the content row (after the stack);
+                # previously this inserted into the vertical main_layout,
+                # which squashed the 300 px panel into a bottom strip.
+                row = getattr(self, "content_row", None)
+                if row is not None:
+                    row.insertWidget(row.indexOf(self.stack) + 1,
+                                     self._queue_panel_w)
+                else:  # defensive fallback for older layouts
+                    self.main_layout.insertWidget(
+                        self.main_layout.indexOf(self.stack) + 1,
+                        self._queue_panel_w)
             self._queue_panel_w.toggle()
             if self._queue_panel_w.isVisible():
                 self._queue_panel_w.refresh()
