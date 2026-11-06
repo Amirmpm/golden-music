@@ -97,4 +97,3 @@ build_release_output/
 
 # Screenshot tooling scratch
 scripts/_grid_preview.png
-library.db*

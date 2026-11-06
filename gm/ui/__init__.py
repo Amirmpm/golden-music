@@ -1,1 +1,0 @@
-"""Golden Music UI components."""

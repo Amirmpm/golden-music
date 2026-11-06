@@ -5,7 +5,6 @@ from pathlib import Path
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # --- Test isolation: sandbox HOME + portable config -------------------------
 # MUST run before any project import (config_path() reads HOME at call time).
 import testenv as _testenv
@@ -47,8 +46,8 @@ print('3. albums single selection: OK', flush=True)
 # 4. Playback speed dialog positions near more_btn (code-level check)
 import inspect
 src = inspect.getsource(m.MainWindow._cycle_playback_rate)
-assert 'anchor_btn' in src, 'speed dialog lost parameterized anchoring'
-print('4. playback speed anchored to requesting button: OK', flush=True)
+assert 'more_btn.mapToGlobal' in src, 'speed dialog still anchored to rate_btn'
+print('4. playback speed anchored to more btn: OK', flush=True)
 
 # 5. Settings dialog QSS readable in all themes
 from config import Theme

@@ -1,20 +1,10 @@
 """
 Golden Music — Custom tray menu widget.
 A polished popup window: now-playing header (cover + title + artist),
-transport controls, a seek bar with elapsed/total time, a volume row
-(mute toggle + slider), and a bottom action row.
+transport controls, and a bottom action row.
 Row 0: [cover] Track title          (now playing)
 Row 1: [prev]    [play/pause]    [next]
-Row 2: [0:00] [======= seek =======] [3:45]
-Row 3: [mute] [======= volume ==========]
-Row 4: [show]  [library icon]  [quit]
-
-The sliders are plain ClickableSlider instances with objectName
-"SeekSlider" / "VolSlider" so the application-wide theme QSS styles them
-exactly like the main player bar. All programmatic updates go through
-the guarded update_*() methods (self._syncing) so no signal echo loops
-are possible; user edits leave through exactly one signal each
-(seek_requested / volume_changed).
+Row 2: [show]  [library icon]  [quit]
 """
 from PyQt6.QtCore import Qt, pyqtSignal, QPoint
 from PyQt6.QtWidgets import (
@@ -28,23 +18,13 @@ from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtCore import QByteArray
 
 from icons import Icon, render_icon, get_dpr
-from widgets import ClickableSlider
-
-
-def _fmt_mmss(ms: int) -> str:
-    """Compact m:ss label (no import from config — keep widget standalone)."""
-    try:
-        s = max(0, int(ms)) // 1000
-        return f"{s // 60}:{s % 60:02d}"
-    except Exception:
-        return "0:00"
 
 
 class TrayIconButton(QPushButton):
     """Glass circular icon button with an optional label under it."""
 
     def __init__(self, svg_string: str, size: int = 24, label: str = "",
-                 parent=None, dims=None):
+                 parent=None):
         super().__init__(parent)
         self.svg_string = svg_string
         self.icon_size = size
@@ -52,8 +32,6 @@ class TrayIconButton(QPushButton):
         if label:
             self.setFixedSize(68, 60)
             self.setText(label)
-        elif dims:
-            self.setFixedSize(*dims)
         else:
             self.setFixedSize(48, 48)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -109,7 +87,7 @@ class TrayIconButton(QPushButton):
 
 
 class TrayMenuWidget(QFrame):
-    """Custom popup tray menu with transport, seek and volume rows."""
+    """Custom popup tray menu with two rows of icon buttons."""
 
     prev_clicked = pyqtSignal()
     play_clicked = pyqtSignal()
@@ -117,24 +95,18 @@ class TrayMenuWidget(QFrame):
     show_clicked = pyqtSignal()
     close_clicked = pyqtSignal()
     quit_clicked = pyqtSignal()
-    seek_requested = pyqtSignal(int)      # ms into the track
-    volume_changed = pyqtSignal(int)      # 0..100 user volume
 
     def __init__(self, theme, parent=None):
         super().__init__(parent)
         self.theme = theme
         self._dividers = []          # kept so set_theme() can restyle them
-        self._duration_ms = 0        # cached track duration for label math
-        self._seek_drag = False      # user is dragging the popup seek bar
-        self._syncing = False        # programmatic update in progress
-        self._last_nonzero_vol = 80  # restore point for the mute toggle
         self.setWindowFlags(
             Qt.WindowType.Popup |
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.NoDropShadowWindowHint
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setFixedSize(300, 366)
+        self.setFixedSize(300, 224)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 14, 14, 12)
@@ -185,45 +157,6 @@ class TrayMenuWidget(QFrame):
         row1_w.setLayout(row1)
         layout.addWidget(row1_w)
 
-        # Row 2: seek — [elapsed] [======== slider ========] [total]
-        seek_row = QHBoxLayout()
-        seek_row.setSpacing(8)
-        self.time_elapsed = QLabel("0:00")
-        self.time_elapsed.setFixedWidth(34)
-        self.time_elapsed.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.time_total = QLabel("0:00")
-        self.time_total.setFixedWidth(34)
-        self.time_total.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.seek_slider = ClickableSlider(Qt.Orientation.Horizontal)
-        self.seek_slider.setObjectName("SeekSlider")   # app QSS match
-        self.seek_slider.setRange(0, 1000)
-        self.seek_slider.setValue(0)
-        self.seek_slider.setEnabled(False)             # no duration yet
-        self.seek_slider.setCursor(Qt.CursorShape.PointingHandCursor)
-        seek_row.addWidget(self.time_elapsed)
-        seek_row.addWidget(self.seek_slider, 1)
-        seek_row.addWidget(self.time_total)
-        seek_row_w = QWidget()
-        seek_row_w.setLayout(seek_row)
-        layout.addWidget(seek_row_w)
-
-        # Row 3: volume — [mute] [======== slider ========]
-        vol_row = QHBoxLayout()
-        vol_row.setSpacing(8)
-        self.btn_mute = TrayIconButton(Icon.VOLUME_HIGH, 18, "",
-                                       None, dims=(30, 30))
-        self.btn_mute.setToolTip("Mute / unmute")
-        self.vol_slider = ClickableSlider(Qt.Orientation.Horizontal)
-        self.vol_slider.setObjectName("VolSlider")     # app QSS match
-        self.vol_slider.setRange(0, 100)
-        self.vol_slider.setValue(80)
-        self.vol_slider.setCursor(Qt.CursorShape.PointingHandCursor)
-        vol_row.addWidget(self.btn_mute)
-        vol_row.addWidget(self.vol_slider, 1)
-        vol_row_w = QWidget()
-        vol_row_w.setLayout(vol_row)
-        layout.addWidget(vol_row_w)
-
         # Divider (attribute kept so set_theme() can restyle it)
         divider = QFrame()
         divider.setFixedHeight(1)
@@ -255,22 +188,13 @@ class TrayMenuWidget(QFrame):
         self.btn_close.clicked.connect(self.close_clicked.emit)
         self.btn_quit.clicked.connect(self.quit_clicked.emit)
 
-        # Seek + volume wiring (single exit path per control)
-        self.seek_slider.sliderPressed.connect(self._on_seek_pressed)
-        self.seek_slider.sliderMoved.connect(self._on_seek_moved)
-        self.seek_slider.sliderReleased.connect(self._on_seek_released)
-        self.seek_slider.valueChanged.connect(self._on_seek_value)
-        self.vol_slider.valueChanged.connect(self._on_vol_value)
-        self.btn_mute.clicked.connect(self._on_mute_clicked)
-
         self._apply_theme(theme)
 
     def _apply_theme(self, theme: dict):
         self.theme = theme
         accent = theme["gold"]
         for btn in [self.btn_prev, self.btn_play, self.btn_next,
-                    self.btn_show, self.btn_close, self.btn_quit,
-                    self.btn_mute]:
+                    self.btn_show, self.btn_close, self.btn_quit]:
             btn.set_color(accent)
             if btn.label_text:
                 btn.set_label_color(theme["text"])
@@ -279,8 +203,6 @@ class TrayMenuWidget(QFrame):
             f"color: {theme['gold_light']}; font-size: 13px; font-weight: 600;")
         self.track_artist.setStyleSheet(
             f"color: {theme['muted']}; font-size: 11px;")
-        for lab in (self.time_elapsed, self.time_total):
-            lab.setStyleSheet(f"color: {theme['muted']}; font-size: 10px;")
         self.cover_label.setStyleSheet(
             f"border-radius: 8px; border: 1px solid {theme['border']};"
             f"background: {theme['panel_bg_2']};")
@@ -358,117 +280,3 @@ class TrayMenuWidget(QFrame):
 
     def update_play_state(self, playing: bool):
         self.btn_play.set_svg(Icon.PAUSE if playing else Icon.PLAY)
-
-    # -------------------------------------------------------- progress / volume
-    def is_seeking(self) -> bool:
-        """True while the user drags the popup seek bar (window uses this to
-        pause its position push so the handle doesn't fight the drag)."""
-        return self._seek_drag
-
-    def update_position(self, ms: int):
-        """Programmatic position sync (from the window's position signal)."""
-        if self._seek_drag:
-            return
-        self._syncing = True
-        try:
-            if self._duration_ms > 0:
-                v = int(max(0, min(1000, int(ms) * 1000 / self._duration_ms)))
-                self.seek_slider.setValue(v)
-            self.time_elapsed.setText(_fmt_mmss(ms))
-        except Exception:
-            pass
-        finally:
-            self._syncing = False
-
-    def update_duration(self, ms: int):
-        """Programmatic duration sync; disables seeking for streams (0 ms)."""
-        self._duration_ms = max(0, int(ms))
-        self._syncing = True
-        try:
-            if self._duration_ms > 0:
-                self.time_total.setText(_fmt_mmss(self._duration_ms))
-                self.seek_slider.setEnabled(True)
-            else:
-                self.time_total.setText("--:--")
-                self.seek_slider.setEnabled(False)
-                self.seek_slider.setValue(0)
-                self.time_elapsed.setText("0:00")
-        except Exception:
-            pass
-        finally:
-            self._syncing = False
-
-    def update_volume(self, vol: int):
-        """Programmatic volume sync (echo-safe)."""
-        vol = max(0, min(100, int(vol)))
-        self._syncing = True
-        try:
-            self.vol_slider.setValue(vol)
-        except Exception:
-            pass
-        finally:
-            self._syncing = False
-        if vol > 0:
-            self._last_nonzero_vol = vol
-        self._refresh_mute_icon(vol)
-
-    # ------------------------------------------------------------- internals
-    def _on_seek_pressed(self):
-        self._seek_drag = True
-
-    def _on_seek_moved(self, val: int):
-        # Live elapsed label while dragging / clicking
-        if self._duration_ms > 0:
-            self.time_elapsed.setText(
-                _fmt_mmss(int(self._duration_ms * val / 1000.0)))
-
-    def _on_seek_released(self):
-        self._seek_drag = False
-        self._commit_seek(self.seek_slider.value())
-
-    def _on_seek_value(self, val: int):
-        # Only keyboard interaction reaches this without a press first;
-        # drags/clicks are handled by press/move/release above.
-        if self._syncing or self._seek_drag:
-            return
-        self._commit_seek(val)
-
-    def _commit_seek(self, val: int):
-        if self._duration_ms <= 0:
-            return
-        try:
-            ms = int(self._duration_ms * val / 1000.0)
-            self.time_elapsed.setText(_fmt_mmss(ms))
-            self.seek_requested.emit(ms)
-        except Exception:
-            pass
-
-    def _on_vol_value(self, val: int):
-        if self._syncing:
-            return
-        val = max(0, min(100, int(val)))
-        if val > 0:
-            self._last_nonzero_vol = val
-        self._refresh_mute_icon(val)
-        self.volume_changed.emit(val)
-
-    def _on_mute_clicked(self):
-        """Mute is 'volume 0' — the same convention as the main player bar,
-        so there is exactly ONE volume code path in the window."""
-        cur = self.vol_slider.value()
-        target = 0 if cur > 0 else (self._last_nonzero_vol or 80)
-        if target != cur:
-            self.vol_slider.setValue(target)   # -> _on_vol_value -> emit
-        else:
-            self._refresh_mute_icon(cur)       # defensive: keep icon truthful
-
-    def _refresh_mute_icon(self, vol: int):
-        try:
-            if vol == 0:
-                self.btn_mute.set_svg(Icon.VOLUME_MUTE)
-            elif vol < 40:
-                self.btn_mute.set_svg(Icon.VOLUME_LOW)
-            else:
-                self.btn_mute.set_svg(Icon.VOLUME_HIGH)
-        except Exception:
-            pass

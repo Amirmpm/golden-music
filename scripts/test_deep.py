@@ -238,13 +238,9 @@ def config_roundtrip():
     w._save_config()
     cfg = json.loads(config_path().read_text(encoding="utf-8"))
     assert cfg["theme"] == "midnight_blue"
-    # Save guard strips scratch paths ONLY outside a sandboxed data dir
-    # (v3.0 rule — see gm.store._sandboxed). Mirror the app's rule here.
+    # Save guard strips scratch/test paths — compare against the same filter
     import main as _m
-    from config import config_path as _cp
-    _sandboxed = _m._is_scratch_path(str(_cp().parent))
-    expect = sorted(p for p in w.library
-                    if _sandboxed or not _m._is_scratch_path(p))
+    expect = sorted(p for p in w.library if not _m._is_scratch_path(p))
     assert sorted(cfg["library"]) == expect, "persisted library mismatch"
     w.theme_name = "royal_gold"
 check("config_save_contains_state", config_roundtrip)

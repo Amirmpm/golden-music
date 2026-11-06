@@ -167,16 +167,15 @@ def playlist_crud():
     w.playlists[clean] = [tracks[0], tracks[1]]
     # duplicate name rejected
     assert PlaylistStore.valid_new_name("my mix", w.playlists) == ""
-    # persistence round-trip — the save guard strips scratch paths only
-    # outside a sandboxed data dir (v3.0 rule); mirror the app's rule here.
+    # persistence round-trip — the save guard strips scratch/test paths,
+    # so compare against the same filter instead of the raw fake tracks.
     w._save_config()
     import json
     import main as _m
     from config import config_path
     cfg = json.loads(config_path().read_text(encoding="utf-8"))
-    _sandboxed = _m._is_scratch_path(str(config_path().parent))
     expect = [t for t in (tracks[0], tracks[1])
-              if _sandboxed or not _m._is_scratch_path(t)]
+              if not _m._is_scratch_path(t)]
     assert cfg["playlists"]["My Mix"] == expect
 check("playlist_store_crud", playlist_crud)
 
