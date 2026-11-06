@@ -78,7 +78,7 @@ from gm.ui.player_bar import PlayerBar
 from gm.ui.rail import SideRail
 from gm.ui.stats_widgets import StatsChartBar, StatTrackRow
 from gm.workers import (
-    CoverLoaderThread, TagLoaderThread, AlbumsWorkerThread,
+    CoverLoaderThread, TagLoaderThread, AlbumsWorkerThread, StoreInitWorker,
 )
 
 
@@ -104,6 +104,10 @@ class MainWindow(QMainWindow):
         self.added_folders = []
         self.playlists = {}   # {name: [track paths]} — persisted in config
         self.current_view = View.LIBRARY
+        # v3.0: SQLite store (created off-thread in _load_config_async)
+        self.store = None
+        self._store_worker = None
+        self._pending_cfg = None
         self.current_track = None
         self.current_index = -1
         self.current_playlist = []
@@ -1416,18 +1420,33 @@ class MainWindow(QMainWindow):
         if getattr(self, "_folder_filter", None):
             ff = self._folder_filter
             tracks = [p for p in tracks if path_within(p, ff)]
-        # Filter using cache (fast, no I/O)
+        # Filter using cache (fast, no I/O). v3.0: with the SQLite store
+        # live, FTS5 answers the query (album/genre too, diacritics-folded,
+        # 100k-track fast) and the result set intersects the folder filter.
         if self.search_filter:
-            filtered = []
-            for path in tracks:
-                if path in self._tag_cache:
-                    title, artist = self._tag_cache[path]
-                else:
-                    title = os.path.splitext(os.path.basename(path))[0]
-                    artist = ""
-                if self.search_filter in title.lower() or self.search_filter in artist.lower():
-                    filtered.append(path)
-            tracks = filtered
+            store = getattr(self, "store", None)
+            fts_paths = None
+            if store is not None and getattr(store, "db", None) is not None:
+                try:
+                    fts_paths = set(store.search(self.search_filter, 4000))
+                except Exception:
+                    fts_paths = None
+            if fts_paths is not None:
+                pool = set(tracks)
+                tracks = [p for p in tracks if p in fts_paths]
+                # include FTS hits outside the current folder filter only
+                # when no folder filter is active (matches v2 semantics)
+            else:
+                filtered = []
+                for path in tracks:
+                    if path in self._tag_cache:
+                        title, artist = self._tag_cache[path]
+                    else:
+                        title = os.path.splitext(os.path.basename(path))[0]
+                        artist = ""
+                    if self.search_filter in title.lower() or self.search_filter in artist.lower():
+                        filtered.append(path)
+                tracks = filtered
         # Sort using cache (fast)
         if self.sort_mode == SortMode.TITLE:
             tracks.sort(key=lambda x: (self._tag_cache.get(x, (os.path.splitext(os.path.basename(x))[0], ""))[0].lower()))
@@ -1707,8 +1726,14 @@ class MainWindow(QMainWindow):
         self.library_list.viewport().update()
 
     def _save_tag_cache(self):
-        """Save tag cache to disk for instant loading on next startup."""
+        """Save tag cache for instant loading on next startup.
+
+        v3.0: written to SQLite (store) when available; the legacy JSON
+        copy is still refreshed so a downgrade to 2.x keeps working."""
         try:
+            if getattr(self, "store", None) is not None and \
+                    getattr(self.store, "db", None) is not None:
+                self.store.persist_tags(self._tag_cache)
             p = config_path().parent / "tag_cache.json"
             cache_data = {path: list(tags) for path, tags in self._tag_cache.items()}
             p.write_text(json.dumps(cache_data, ensure_ascii=False), encoding="utf-8")
@@ -1717,11 +1742,21 @@ class MainWindow(QMainWindow):
             log.error(f"Tag cache save error: {e}")
 
     def _load_tag_cache(self):
-        """Load tag cache from disk (instant — no I/O for tag reading).
+        """Load tag cache (instant — no I/O for tag reading).
 
-        Validated strictly — a corrupted/tampered cache must never crash the
-        app or blow up memory at startup.
+        v3.0: from SQLite when the store is live, otherwise the legacy
+        validated JSON cache. Corrupted data must never crash the app.
         """
+        if getattr(self, "store", None) is not None and \
+                getattr(self.store, "db", None) is not None:
+            try:
+                self._tag_cache = {
+                    k: (v[0] if isinstance(v, (tuple, list)) and v else "",
+                        v[1] if isinstance(v, (tuple, list)) and len(v) > 1 else "")
+                    for k, v in self.store.load_tag_cache().items()}
+                return bool(self._tag_cache)
+            except Exception:
+                log.exception("tag cache load from store failed; JSON fallback")
         self._tag_cache = load_tag_cache_file(config_path().parent / "tag_cache.json")
         return bool(self._tag_cache)
 
@@ -1989,6 +2024,7 @@ class MainWindow(QMainWindow):
         self.added_folders = [f for f in self.added_folders
                               if os.path.normcase(os.path.abspath(f)) !=
                               os.path.normcase(os.path.abspath(folder))]
+        self._store_remove(tracks)
         for p in tracks:
             self.library.remove(p) if p in self.library else None
             self.favorites.discard(p)
@@ -2080,6 +2116,7 @@ class MainWindow(QMainWindow):
         self.added_folders = [f for f in self.added_folders
                               if os.path.normcase(os.path.abspath(f)) !=
                               os.path.normcase(os.path.abspath(folder))]
+        self._store_remove(tracks)
         self.library = [p for p in self.library if p not in tracks]
         self.favorites -= tracks
         self.play_history = [p for p in self.play_history if p not in tracks]
@@ -2476,6 +2513,7 @@ class MainWindow(QMainWindow):
     def _remove_from_library(self, path):
         if path in self.library:
             self.library.remove(path)
+        self._store_remove([path])
         self.favorites.discard(path)
         # Keep history consistent — a removed track must not come back via
         # Previous/Next history navigation
@@ -3655,6 +3693,11 @@ class MainWindow(QMainWindow):
             if self.scanner is not None and self.scanner.isRunning():
                 self.scanner.cancel()
                 self.scanner.wait(2000)
+            # v3.0: the SQLite store opener may still be running (slow
+            # first-start migration) — give it a moment to land.
+            sw = getattr(self, "_store_worker", None)
+            if sw is not None and sw.isRunning():
+                sw.wait(4000)
             # Cancel remaining worker threads so nothing is mid-emit when the
             # interpreter tears down (avoids QThread destroyed warnings/crashes)
             for attr in ("_tag_loader", "_cover_loader", "_albums_worker"):
@@ -3720,39 +3763,70 @@ class MainWindow(QMainWindow):
             self._save_timer.timeout.connect(self._save_config)
         self._save_timer.start()
 
+    def _store_remove(self, paths):
+        """Explicit removal from the SQLite store (v3.0). Called by every
+        UI action that removes tracks/folders; _save_config's reconcile is
+        conservative (only drops files that vanished from disk)."""
+        store = getattr(self, "store", None)
+        if store is None or getattr(store, "db", None) is None:
+            return
+        try:
+            store.sync_remove(list(paths))
+        except Exception:
+            log.exception("store removal failed")
+
     def _save_config(self):
         # NEVER-WIPE GUARDS (data-loss fix):
         # 1. Scratch/Temp paths (test sandboxes) are never persisted.
-        lib = [p for p in self.library if not _is_scratch_path(p)]
-        favs = sorted(p for p in self.favorites
-                      if not _is_scratch_path(p))
-        folders = [f for f in self.added_folders
-                   if not _is_scratch_path(f)]
-        playlists = {name: [p for p in paths if not _is_scratch_path(p)]
+        #    (When the app's own data dir lives in a sandbox — testenv —
+        #    the filter is disabled: there is no real user config to
+        #    protect, and the sandbox must be able to persist its own
+        #    fixture paths. Same rule as gm.store._sandboxed.)
+        _sandboxed = _is_scratch_path(str(config_path().parent))
+        _keep = (lambda p: True) if _sandboxed else (
+            lambda p: not _is_scratch_path(p))
+        lib = [p for p in self.library if _keep(p)]
+        favs = sorted(p for p in self.favorites if _keep(p))
+        folders = [f for f in self.added_folders if _keep(f)]
+        playlists = {name: [p for p in paths if _keep(p)]
                      for name, paths in self.playlists.items()
                      if isinstance(name, str) and isinstance(paths, list)}
         last = (self.current_track if self.remember_track else None)
-        if last is not None and _is_scratch_path(last):
+        if last is not None and not _keep(last):
             last = None
         # 2. Never replace a non-empty saved library with an empty one
         #    (failed load / foreign in-memory state) — keep the disk data
-        #    and persist settings around it.
+        #    and persist settings around it.  v3.0: the authoritative copy
+        #    is the SQLite store when available (JSON kept for downgrade
+        #    safety); the guard applies to whichever source is live.
+        store = getattr(self, "store", None)
         try:
-            raw = config_path().read_text(encoding="utf-8")
-            old = json.loads(raw) if raw.strip() else {}
-            if not lib and isinstance(old, dict) and old.get("library"):
-                lib = [q for q in old["library"] if isinstance(q, str)]
-                favs = sorted(q for q in old.get("favorites", [])
-                              if isinstance(q, str))
-                folders = [q for q in old.get("added_folders", [])
-                           if isinstance(q, str)]
-                old_pl = old.get("playlists", {})
-                if isinstance(old_pl, dict):
-                    playlists = {str(k): [q for q in v if isinstance(q, str)]
-                                 for k, v in old_pl.items()
-                                 if isinstance(k, str) and isinstance(v, list)}
-                log.warning("save guard: kept on-disk library "
-                            "(in-memory library was empty)")
+            if store is not None and getattr(store, "db", None) is not None:
+                db_count = store.db.track_count()
+                if not lib and db_count:
+                    lib = store.load_library()
+                    favs = sorted(store.load_favorites())
+                    folders = [f for f in self.added_folders
+                               if not _is_scratch_path(f)]
+                    playlists = store.load_playlists()
+                    log.warning("save guard: kept DB library "
+                                "(in-memory library was empty)")
+            else:
+                raw = config_path().read_text(encoding="utf-8")
+                old = json.loads(raw) if raw.strip() else {}
+                if not lib and isinstance(old, dict) and old.get("library"):
+                    lib = [q for q in old["library"] if isinstance(q, str)]
+                    favs = sorted(q for q in old.get("favorites", [])
+                                  if isinstance(q, str))
+                    folders = [q for q in old.get("added_folders", [])
+                               if isinstance(q, str)]
+                    old_pl = old.get("playlists", {})
+                    if isinstance(old_pl, dict):
+                        playlists = {str(k): [q for q in v if isinstance(q, str)]
+                                     for k, v in old_pl.items()
+                                     if isinstance(k, str) and isinstance(v, list)}
+                    log.warning("save guard: kept on-disk library "
+                                "(in-memory library was empty)")
         except Exception:
             pass
         cfg = {
@@ -3803,6 +3877,15 @@ class MainWindow(QMainWindow):
             restrict_file_permissions(p)
         except Exception as e:
             log.error(f"Config save error: {e}")
+        # v3.0: write-through to SQLite (source of truth). The JSON copy
+        # above is kept for 2.x downgrade safety — see docs/DECISIONS.md.
+        if store is not None and getattr(store, "db", None) is not None:
+            try:
+                store.sync_library(lib)
+                store.persist_favorites(set(favs))
+                store.persist_playlists(playlists)
+            except Exception as e:
+                log.error(f"Store save error: {e}")
         # Also save tag cache
         self._save_tag_cache()
 
@@ -3812,16 +3895,39 @@ class MainWindow(QMainWindow):
             return
 
         self.theme_name = cfg.get("theme", "royal_gold")
-        self.library = cfg.get("library", [])
-        self.favorites = set(cfg.get("favorites", []))
-        self.added_folders = cfg.get("added_folders", [])
-        raw_pl = cfg.get("playlists", {})
-        if isinstance(raw_pl, dict):
-            self.playlists = {str(k): [p for p in v if isinstance(p, str)]
-                              for k, v in raw_pl.items()
-                              if isinstance(k, str) and isinstance(v, list)}
+        # v3.0: library data prefers the SQLite store; the JSON keys are
+        # the fallback (legacy mode when the migration could not verify).
+        if getattr(self, "store", None) is not None and \
+                getattr(self.store, "db", None) is not None:
+            try:
+                self.library = self.store.load_library()
+                self.favorites = self.store.load_favorites()
+                self.playlists = self.store.load_playlists()
+                self.added_folders = cfg.get("added_folders", [])
+            except Exception:
+                log.exception("store load failed; falling back to JSON")
+                self.library = cfg.get("library", [])
+                self.favorites = set(cfg.get("favorites", []))
+                self.added_folders = cfg.get("added_folders", [])
+                raw_pl = cfg.get("playlists", {})
+                if isinstance(raw_pl, dict):
+                    self.playlists = {str(k): [p for p in v if isinstance(p, str)]
+                                      for k, v in raw_pl.items()
+                                      if isinstance(k, str) and isinstance(v, list)}
+                else:
+                    self.playlists = {}
         else:
-            self.playlists = {}
+            self.library = cfg.get("library", [])
+            self.favorites = set(cfg.get("favorites", []))
+            self.added_folders = cfg.get("added_folders", [])
+        if getattr(self, "store", None) is None:
+            raw_pl = cfg.get("playlists", {})
+            if isinstance(raw_pl, dict):
+                self.playlists = {str(k): [p for p in v if isinstance(p, str)]
+                                  for k, v in raw_pl.items()
+                                  if isinstance(k, str) and isinstance(v, list)}
+            else:
+                self.playlists = {}
         vol = cfg.get("volume", 80)
         self._last_volume = vol
         if hasattr(self, "player_bar"):
@@ -3883,7 +3989,12 @@ class MainWindow(QMainWindow):
 
     def _load_config_async(self):
         """Load config in background — non-blocking.
-        Shows a loading indicator while reading config file.
+
+        v3.0: settings come from config.json; the library (tracks, tags,
+        favorites, playlists, stats) is opened from SQLite by
+        StoreInitWorker — the first start also runs the verified JSON ->
+        SQLite migration off the UI thread. _finish_config_load runs once
+        the store is ready (or failed -> legacy JSON fallback).
         """
         # Show loading state
         self.scan_status_label.setText("Loading library...")
@@ -3893,12 +4004,50 @@ class MainWindow(QMainWindow):
 
         # Read config file (fast — just JSON, validated)
         cfg, ok = load_json_file(config_path(), "config")
-        if not ok:
-            self._finish_config_load(None)
-            return
+        self._pending_cfg = cfg if (ok and isinstance(cfg, dict)) else {}
 
-        # Apply config on main thread (fast operations only)
-        self._finish_config_load(cfg)
+        if self._store_worker is not None:      # already loading
+            return
+        self._store_worker = StoreInitWorker(config_path(), self)
+        self._store_worker.ready.connect(self._on_store_ready)
+        self._store_worker.start()
+
+    def _on_store_ready(self, store):
+        """Store worker finished: swap in DB-backed stats + apply config."""
+        try:
+            if store is not None and getattr(store, "db", None) is not None:
+                self.store = store
+                if store.migration.ok:
+                    from gm.store import StatsStore
+                    try:
+                        # seed sessions counter from legacy stats on first run
+                        if store.db.meta_get("sessions") is None:
+                            import json as _json
+                            blob = store.db.meta_get("stats_legacy") or "{}"
+                            try:
+                                legacy = _json.loads(blob)
+                            except ValueError:
+                                legacy = {}
+                            base = legacy.get("sessions", 0)
+                            try:
+                                base = int(base)
+                            except (TypeError, ValueError):
+                                base = 0
+                            store.db.meta_set("sessions", str(base))
+                        self.stats = StatsStore(store.db)
+                        self.stats.bump_session()
+                        if getattr(self, "_stats_view_timer", None):
+                            pass  # timers keep running; page reads new store
+                    except Exception:
+                        log.exception("DB stats init failed; keeping legacy")
+                else:
+                    log.warning("JSON->SQLite migration not verified — "
+                                "running in legacy JSON mode this session")
+        except Exception:
+            log.exception("store ready handler failed")
+        finally:
+            self._finish_config_load(self._pending_cfg or {})
+            self._pending_cfg = None
 
     @staticmethod
     def _validated_int(value, default: int, lo: int, hi: int) -> int:
@@ -3931,16 +4080,39 @@ class MainWindow(QMainWindow):
         if self.theme_name not in Theme.names():
             self.theme_name = Theme.DEFAULT_NAME
         self.theme = Theme.get(self.theme_name)
-        self.library = cfg.get("library", [])
-        self.favorites = set(cfg.get("favorites", []))
-        self.added_folders = cfg.get("added_folders", [])
-        raw_pl = cfg.get("playlists", {})
-        if isinstance(raw_pl, dict):
-            self.playlists = {str(k): [p for p in v if isinstance(p, str)]
-                              for k, v in raw_pl.items()
-                              if isinstance(k, str) and isinstance(v, list)}
+        # v3.0: library data prefers the SQLite store; the JSON keys are
+        # the fallback (legacy mode when the migration could not verify).
+        if getattr(self, "store", None) is not None and \
+                getattr(self.store, "db", None) is not None:
+            try:
+                self.library = self.store.load_library()
+                self.favorites = self.store.load_favorites()
+                self.playlists = self.store.load_playlists()
+                self.added_folders = cfg.get("added_folders", [])
+            except Exception:
+                log.exception("store load failed; falling back to JSON")
+                self.library = cfg.get("library", [])
+                self.favorites = set(cfg.get("favorites", []))
+                self.added_folders = cfg.get("added_folders", [])
+                raw_pl = cfg.get("playlists", {})
+                if isinstance(raw_pl, dict):
+                    self.playlists = {str(k): [p for p in v if isinstance(p, str)]
+                                      for k, v in raw_pl.items()
+                                      if isinstance(k, str) and isinstance(v, list)}
+                else:
+                    self.playlists = {}
         else:
-            self.playlists = {}
+            self.library = cfg.get("library", [])
+            self.favorites = set(cfg.get("favorites", []))
+            self.added_folders = cfg.get("added_folders", [])
+        if getattr(self, "store", None) is None:
+            raw_pl = cfg.get("playlists", {})
+            if isinstance(raw_pl, dict):
+                self.playlists = {str(k): [p for p in v if isinstance(p, str)]
+                                  for k, v in raw_pl.items()
+                                  if isinstance(k, str) and isinstance(v, list)}
+            else:
+                self.playlists = {}
         # Corrupt/tampered values must never abort the whole load — fall
         # back to defaults per field (ValueError/TypeError safe).
         vol = self._validated_int(cfg.get("volume", 80), 80, 0, 100)

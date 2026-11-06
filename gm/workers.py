@@ -150,3 +150,24 @@ class AlbumsWorkerThread(QThread):
                     break
             self.album_group_ready.emit(name, list(paths), cover_data)
 
+
+
+class StoreInitWorker(QThread):
+    """Opens the SQLite store (running the JSON->SQLite migration on the
+    first 3.0 start) off the UI thread. Emits the LibraryStore, or None on
+    failure (caller falls back to legacy JSON mode)."""
+    ready = pyqtSignal(object)
+
+    def __init__(self, config_file=None, parent=None):
+        super().__init__(parent)
+        self._config_file = config_file
+
+    def run(self):
+        store = None
+        try:
+            from gm.store import LibraryStore
+            store = LibraryStore(self._config_file)
+        except Exception:
+            log.exception("store init failed; falling back to JSON mode")
+            store = None
+        self.ready.emit(store)
