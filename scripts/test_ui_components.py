@@ -98,7 +98,7 @@ def sidebar_keys():
 
 def sidebar_construct():
     assert sb.objectName() == "Sidebar", "objectName"
-    assert sb.width() == 216, f"width {sb.width()}"
+    assert sb.width() == 232, f"width {sb.width()}"
     keys = sidebar_keys()
     assert set(keys) == SIDEBAR_BUTTON_KEYS, f"keys {sorted(set(keys))}"
     for k in NAV_KEYS:
@@ -153,7 +153,7 @@ def sidebar_collapsed():
         assert b.text() == "", "labels hidden in collapsed mode"
         assert b.toolTip(), "tooltips required in collapsed mode"
     sb.set_collapsed(False)
-    assert sb.width() == 216
+    assert sb.width() == 232
     keys = sidebar_keys()
     assert keys["library"].text() == "Library"
     assert keys["command"].text() == "Command Palette"

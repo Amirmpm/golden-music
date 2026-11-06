@@ -29,8 +29,9 @@ Love design? Create new color themes!
 3. Submit a Pull Request
 
 ### 🌍 Translate
-Help translate Golden Music to your language.
-*(Internationalization support coming soon — express interest in an issue!)*
+Help translate Golden Music to your language — the i18n infrastructure now
+ships in `gm/i18n.py` (Persian + full RTL layout already included). Open an
+issue and we'll point you at the string tables!
 
 ### 📝 Improve Documentation
 - Fix typos
@@ -71,6 +72,8 @@ Fix bugs, add features, optimize performance.
    ```bash
    pip install -r requirements.txt
    ```
+   (On Windows add `pip install pywin32`; on Linux install the Qt system
+   libraries first — see [INSTALLATION.md](INSTALLATION.md))
 
 5. **Run the app**:
    ```bash
@@ -87,11 +90,12 @@ Fix bugs, add features, optimize performance.
 ## 📝 Development Workflow
 
 1. **Make your changes** following the code style below
-2. **Test your changes** thoroughly:
+2. **Test your changes** thoroughly (cross-platform, headless-friendly):
    ```bash
-   python scripts/test_functional.py  # Functional tests
-   python scripts/test_crash.py       # Crash tests
+   QT_QPA_PLATFORM=offscreen python scripts/test_functional.py
    ```
+   (Windows PowerShell: `$env:QT_QPA_PLATFORM="offscreen"` first — see the
+   Testing section for the full suite list)
 3. **Commit** with a clear message (see convention below)
 4. **Push** to your fork
 5. **Open a Pull Request** with a clear description
@@ -148,6 +152,26 @@ type: brief description
 - Include all required keys: `name`, `window_bg`, `panel_bg`, `panel_bg_2`, `border`, `text`, `muted`, `gold`, `gold_light`, `gold_deep`, `active`, `is_dark`
 - Add a display name in `Theme.display_name()`
 - Add the theme to `Theme.ALL` list
+- The v3 QSS design system (`gm/theme_qss.py`) picks themes up from there —
+  verify your palette in both the row and table views
+
+---
+
+## 🧩 New-module Conventions
+
+- **Guarded imports for optional dependencies** — wrap optional deps
+  (python-mpv, miniaudio, qrcode, dbus-python) in `try/except ImportError`
+  and degrade gracefully. A missing optional must never crash or block
+  startup — features simply mark themselves unavailable
+- **Never crash at IO boundaries** — file, tag, database and lyrics-provider
+  failures are logged and surfaced to the user, never raised into the UI
+  thread
+- **English UI strings + `tr()`** — new UI chrome uses English literals
+  wrapped in the translation helper from `gm/i18n.py`, so translations can
+  pick it up (Persian + RTL already ship)
+- **Plain-script tests** — every new module ships a
+  `scripts/test_<name>.py` suite following the `[OK]` / `[FAIL]` per-check,
+  `SUMMARY` line, non-zero exit code convention (below)
 
 ---
 
@@ -170,10 +194,11 @@ What you expected to happen.
 If applicable, add screenshots.
 
 **Environment:**
-- OS: Windows 11
-- Python version: 3.11.0
-- Golden Music version: 2.1.1
+- OS: Windows 11 / Ubuntu 24.04 (include your distro on Linux)
+- Python version: 3.12.0
+- Golden Music version: 3.0.0
 - How did you install: [installer / from source]
+- Optional extras installed: [python-mpv / miniaudio / qrcode / dbus-python / none]
 ```
 
 ---
@@ -198,20 +223,65 @@ Any other context or screenshots about the feature request.
 
 ## 🧪 Testing
 
-Before submitting a Pull Request, please test:
+The project has **23 offline test suites** — plain Python scripts, no pytest
+required — and CI runs them on **Windows and Linux** (Python 3.12/3.13,
+offscreen Qt, plus a Bandit security gate and the build job).
+
+Run any suite locally, headless-friendly and cross-platform:
 
 ```bash
-# Run functional tests
-python scripts/test_functional.py
-
-# Run crash tests
-python scripts/test_crash.py
-
-# Run stability tests
-python scripts/test_stability.py
+# Linux / macOS
+QT_QPA_PLATFORM=offscreen python scripts/test_functional.py
 ```
 
-**All tests must pass** before a PR can be merged.
+```powershell
+# Windows (PowerShell)
+$env:QT_QPA_PLATFORM = "offscreen"
+python scripts\test_functional.py
+```
+
+The suites: the 12 v2 suites — `test_functional`, `test_deep`,
+`test_stability`, `test_stability_v2`, `test_history_nav`, `test_features`,
+`test_crash`, `test_tray_toggle`, `test_open_with`, `test_shortcuts`,
+`test_updater`, `test_version_sync` — plus the 11 v3 suites — `test_sqlite`,
+`test_store_boot`, `test_audio_engines`, `test_lyrics3`, `test_remote`,
+`test_m3u`, `test_ui_components`, `test_settings3`, `test_pages3`,
+`test_stats3`, `test_lyrics_ui`.
+
+**All tests must pass before a PR can be merged** — on BOTH platforms when
+your change touches platform-specific code.
+
+### ⚠️ The testenv sandbox rule (absolute)
+
+Any script that boots `MainWindow` **must** call `testenv.install()` before
+any other project import:
+
+```python
+sys.path.insert(0, <repo root>)
+import testenv; testenv.install()
+```
+
+`scripts/testenv.py` sandboxes `HOME`/`USERPROFILE` and the portable dev
+config so a test can never overwrite real user data. This rule is
+non-negotiable: the 2.1.1 data-loss incident — a test suite booted the real
+`MainWindow` with fake tracks and `_save_config()` wiped a real library —
+is exactly what it prevents. Escape hatch (live-data screenshot scripts
+only): `GOLDENMUSIC_ALLOW_REAL_CONFIG=1`.
+
+### Writing new tests
+
+- Plain scripts: print `[OK]` / `[FAIL]` per check, end with a
+  `SUMMARY: N passed, M failed` line, and exit non-zero on any failure —
+  that's what CI gates on
+- Keep them offline: no network, no real user data
+
+### Security gate (Bandit)
+
+```bash
+bandit -r . -q --exclude "./.git,./build,./dist,./screenshots,./scripts,./assets" --severity-level medium
+```
+
+Zero findings at medium severity or above — same command CI runs.
 
 ---
 
@@ -230,41 +300,50 @@ build_windows.bat
 
 ```
 golden-music/
-├── main.pyw             # Main window (start here)
-├── config.py            # Themes, QSS, helpers
-├── icons.py             # SVG icons
-├── audio.py             # Audio backend
-├── scanner.py           # Folder scanner
-├── coverart.py          # Cover art extraction
-├── widgets.py           # Custom widgets
-├── tray_menu.py         # Tray menu
-├── theme_picker.py      # Theme picker
-├── settings_dialog.py   # Settings dialog
-├── mini_player.py       # Mini player
-├── assets/              # Icons and images
-└── scripts/             # Test scripts
+├── main.pyw / main.py   # Thin entry points (double-click / importable)
+├── gm/                  # The application package (v3)
+│   ├── core.py / window.py / app.py     # MainWindow, app bootstrap
+│   ├── platforms.py                     # Cross-platform OS layer
+│   ├── db.py / store.py / migration.py  # SQLite library (WAL + FTS5)
+│   ├── player_adapter.py / audio_engines.py   # Engine layer (mpv → Qt)
+│   ├── lyrics_*.py                      # Search, quality, editor, i18n
+│   ├── webremote.py / telegrambot.py / mpris.py
+│   ├── workers.py                       # Background threads
+│   ├── prefs.py / i18n.py / theme_qss.py / dynamic_theme.py
+│   └── ui/                              # All v3 widgets & pages
+├── config.py, icons.py, scanner.py, ... # Shared v2-era modules still in
+│                                        #   use (themes, icons, scanning)
+├── scripts/             # 23 offline test suites + tooling
+├── docs/DECISIONS.md    # Architecture decision log — read this first
+└── requirements.txt     # Hard deps + documented optional extras
 ```
+
+**Architecture questions?** Read [docs/DECISIONS.md](docs/DECISIONS.md) —
+it records every non-obvious 3.0 decision (SQLite + FTS5, the audio engine
+layer with mpv→Qt fallback, opt-in smart playlists, the content-driven FFT
+spectrum analyzer, the stdlib-only web remote, …) and the reasoning behind
+each one.
 
 ---
 
 ## 🎯 Areas Needing Help
 
 ### High Priority
-- 🎚️ **Equalizer** — 10-band graphic EQ
-- 🔊 **Crossfade** — Smooth transitions between tracks
-- 📱 **System media keys** — Integrate with Windows media keys
-- 🌍 **Internationalization** — Multi-language support
+- 🐧 **Linux packaging** — deb/rpm, AppImage or Flatpak (PyInstaller
+  one-dir builds already work; see [INSTALLATION.md](INSTALLATION.md))
+- 🌍 **More translations** — the i18n infrastructure and Persian (RTL)
+  already ship in `gm/i18n.py`; more languages are welcome
 
 ### Medium Priority
-- 📋 **Playlist management** — Custom playlists
-- 🎤 **Lyrics display** — Synced lyrics
-- 📊 **Statistics** — Play count, recently played
-- 🔄 **Gapless playback** — For albums/concerts
+- 📱 **Android port** — the PySide6 + Qt for Android route is documented in
+  [INSTALLATION.md](INSTALLATION.md); big but well-scoped
+- 🎤 **More lyrics providers** — the provider interface is injectable
+  (lrclib.net ships built-in)
+- 🎨 **Theme editor** — a custom theme creator on top of the v3 QSS design
+  system
 
 ### Nice to Have
-- 📱 **Mobile companion app**
-- ☁️ **Cloud sync** — Sync favorites across devices
-- 🎨 **Theme editor** — Custom theme creator
+- ☁️ **Cloud sync** — sync favorites and ratings across devices
 - 📡 **Podcast support**
 
 ---

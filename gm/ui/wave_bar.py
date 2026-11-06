@@ -46,7 +46,8 @@ class WaveformSeekbar(ClickableSlider):
         # played ratio
         rng = self.maximum() - self.minimum()
         ratio = (self.value() - self.minimum()) / rng if rng else 0.0
-        t = self.parentWidget().theme if self.parentWidget() else None
+        _p = self.parentWidget()
+        t = getattr(_p, "theme", None) if _p else None
         base = QColor(t.get("panel_bg_2", "#2a2a30")) if t else QColor("#2a2a30")
         accent = QColor(t.get("gold", "#d4a85a")) if t else QColor("#d4a85a")
         played = accent

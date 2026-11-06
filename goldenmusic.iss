@@ -15,7 +15,7 @@
 ; by hand this default must match version.py (scripts/test_version_sync.py
 ; asserts the agreement, so a drift breaks CI instead of shipping).
 #ifndef AppVersion
-#define AppVersion     "2.2.0"
+#define AppVersion     "3.0.0"
 #endif
 #define AppPublisher   "Golden Music"
 #define AppExeName     "GoldenMusic.exe"

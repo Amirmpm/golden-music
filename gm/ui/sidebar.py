@@ -38,7 +38,7 @@ from icons import Icon, get_dpr, render_icon
 # ---------------------------------------------------------------------------
 # geometry / row model
 # ---------------------------------------------------------------------------
-WIDTH_EXPANDED = 216
+WIDTH_EXPANDED = 232
 WIDTH_COLLAPSED = 68
 ICON_PX = 18
 INK_DARK = "#141414"  # text/icon color on the gold checked gradient (dark themes)

@@ -262,18 +262,6 @@ class MainWindow(QMainWindow):
         self._fx_timer.timeout.connect(self._on_fx_tick)
         self._fx_timer.start()
 
-    def _on_fx_tick(self):
-        try:
-            if getattr(self, "fx", None):
-                self.fx.tick()
-        except Exception:
-            pass
-        try:
-            if getattr(self, "audio_v3", None) is not None:
-                self.audio_v3.tick()
-        except Exception:
-            pass
-
         # Keyboard shortcuts
         self._setup_shortcuts()
 
@@ -315,6 +303,19 @@ class MainWindow(QMainWindow):
         except Exception as e:
             log.warning(f"auto-theme watcher unavailable: {e}")
             self._auto_theme_watcher = None
+
+    def _on_fx_tick(self):
+        """100 ms tick: A-B repeat precision + crossfade ramp advancement."""
+        try:
+            if getattr(self, "fx", None):
+                self.fx.tick()
+        except Exception:
+            pass
+        try:
+            if getattr(self, "audio_v3", None) is not None:
+                self.audio_v3.tick()
+        except Exception:
+            pass
 
     # Dark and light theme names used by "follow Windows" mode.
     AUTO_DARK_THEME = Theme.AUTO_DARK_DEFAULT
@@ -471,16 +472,33 @@ class MainWindow(QMainWindow):
                 lambda pth: self._play_path_standalone(pth))
             self.stats_page.favorite_toggled.connect(
                 lambda pth, on: self._stats_toggle_favorite(pth, on))
-            self.stats_page.artist_chart.row_clicked.connect(
-                lambda row: self._play_artist_from_stats(row))
+            _ac = getattr(self.stats_page, "artist_chart", None)
+            if _ac is not None:
+                _ac.row_clicked.connect(
+                    lambda row: self._play_artist_from_stats(row))
         except Exception:
             log.exception("stats page signal wiring failed")
+        # pages ship their own headers; the window-level page_title already
+        # names the destination — hide the duplicates
+        for _pg, _attr in ((self.albums_page, "title"),
+                           (self.stats_page, "title_lbl")):
+            try:
+                getattr(_pg, _attr).hide()
+            except Exception:
+                pass
         self.artists_page = ArtistsPage(self)                 # 4 artists
         self.stack.addWidget(self.artists_page)
         self.genres_page = GenresPage(self)                   # 5 genres
         self.stack.addWidget(self.genres_page)
         self.playlists_page = PlaylistsPage3(self)            # 6 playlists
         self.stack.addWidget(self.playlists_page)
+        for _pg, _attr in ((self.artists_page, "title_lbl"),
+                           (self.genres_page, "title_lbl"),
+                           (self.playlists_page, "title_lbl")):
+            try:
+                getattr(_pg, _attr).hide()
+            except Exception:
+                pass
         self.radio_page = self._build_radio_page()            # 7 radio
         self.stack.addWidget(self.radio_page)
         self.main_layout.addWidget(self.stack, 1)
