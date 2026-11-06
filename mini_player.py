@@ -62,7 +62,7 @@ class MiniPlayer(QWidget):
         row.addWidget(info_w, 1)
 
         # Controls
-        from main import IconButton
+        from gm.ui.widgets import IconButton
         self.prev_btn = IconButton(Icon.PREV, icon_size=16, button_size=28)
         self.play_btn = QPushButton()
         self.play_btn.setFixedSize(32, 32)

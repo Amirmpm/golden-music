@@ -34,6 +34,12 @@ def create_startup_backup(data_dir: Path):
         broot.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime("%Y-%m-%d_%H%M%S")
         snap = broot / stamp
+        # same-second collisions (startup + migration can both snapshot):
+        # tolerate instead of failing the whole backup
+        n = 1
+        while snap.exists():
+            n += 1
+            snap = broot / f"{stamp}_{n}"
         snap.mkdir()
         copied = 0
         for name in DATA_FILES:

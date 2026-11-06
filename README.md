@@ -4,14 +4,15 @@
 
 # 🎵 Golden Music
 
-### The modern Windows music player that stays out of your way
+### The modern music player that stays out of your way
 
-*12 psychology-driven themes · Smart shuffle · Glass tray popup · Zero clutter*
+*SQLite-fast library · 12 psychology themes · Real gapless & crossfade · Tray volume & seek · Windows + Linux*
 
-[![Version](https://img.shields.io/badge/Version-2.2.0-brightgreen?style=for-the-badge)](../../releases)
+[![Version](https://img.shields.io/badge/Version-2.3.0-brightgreen?style=for-the-badge)](../../releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![PyQt6](https://img.shields.io/badge/PyQt6-6.11+-41CD52?style=for-the-badge&logo=qt&logoColor=white)](https://www.riverbankcomputing.com/software/pyqt/)
 [![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white)](#)
+[![Platform](https://img.shields.io/badge/Platform-Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)](#)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
 [![CI](https://github.com/Amirmpm/golden-music/actions/workflows/ci.yml/badge.svg)](https://github.com/Amirmpm/golden-music/actions/workflows/ci.yml)
 [![Stars](https://img.shields.io/github/stars/Amirmpm/golden-music?style=for-the-badge)](../../stargazers)
@@ -21,6 +22,51 @@
 ---
 
 ## 📸 Screenshots
+
+The redesigned interface — captured live from the app:
+
+<table>
+<tr>
+<td align="center"><b>📚 Library</b></td>
+<td align="center"><b>💿 Albums</b></td>
+</tr>
+<tr>
+<td><img src="screenshots/v3_library.png" width="400" alt="Library page"></td>
+<td><img src="screenshots/v3_albums.png" width="400" alt="Albums page"></td>
+</tr>
+<tr>
+<td align="center"><b>🎤 Artists</b></td>
+<td align="center"><b>🎼 Genres</b></td>
+</tr>
+<tr>
+<td><img src="screenshots/v3_artists.png" width="400" alt="Artists page"></td>
+<td><img src="screenshots/v3_genres.png" width="400" alt="Genres page"></td>
+</tr>
+<tr>
+<td align="center"><b>📊 Stats</b></td>
+<td align="center"><b>⌨️ Command Palette</b></td>
+</tr>
+<tr>
+<td><img src="screenshots/v3_stats.png" width="400" alt="Stats page"></td>
+<td><img src="screenshots/v3_command_palette.png" width="400" alt="Command palette"></td>
+</tr>
+<tr>
+<td align="center"><b>📻 Radio</b></td>
+<td align="center"><b>🎚️ Settings</b></td>
+</tr>
+<tr>
+<td><img src="screenshots/v3_radio.png" width="400" alt="Radio page"></td>
+<td><img src="screenshots/v3_settings.png" width="400" alt="Settings dialog"></td>
+</tr>
+<tr>
+<td align="center"><b>▶ Up Next queue</b></td>
+<td align="center"><b>📋 Playlists</b></td>
+</tr>
+<tr>
+<td><img src="screenshots/v3_queue.png" width="400" alt="Queue panel"></td>
+<td><img src="screenshots/v3_playlists.png" width="400" alt="Playlists page"></td>
+</tr>
+</table>
 
 Every theme pairs a dark shot with its light twin — six matched duos:
 
@@ -75,11 +121,58 @@ Every theme pairs a dark shot with its light twin — six matched duos:
 </tr>
 </table>
 
-*All twelve themes, captured live from the app. Click any screenshot for the full-size view.*
+*All twelve theme palettes, captured live from the app — the redesigned UI restyles every control around these same twelve palettes.*
 
 ---
 
 ## ✨ Highlights
+
+### ⚡ A library that keeps up with you
+
+The whole library now lives in an **SQLite database with FTS5 full-text
+search** — instant prefix search over title / artist / album / genre
+(diacritics folded), incremental writes instead of whole-file rewrites, and
+a design tested for **100k+ track** libraries. Big lists render progressively
+(60 rows per tick), so scrolling stays smooth no matter how much music you
+have.
+
+- **Track list, your way** — classic rows or a virtual **table view** with
+  user-selectable columns (#, Title, Artist, Album, Genre, Duration, Rating,
+  Bitrate, Plays, File) and a density setting
+- **Albums / Artists / Genres pages** — grid or list, search & sort, and
+  detail views with a big cover plus Play All / Shuffle
+- **Favorites with your own categories**, 1–5 **star ratings** (stored in
+  the app *and* written to file tags where supported) and opt-in **smart
+  playlists** (Most Played / Recently Added / Never Played / Not Heard
+  Recently / Top Rated)
+- **M3U/M3U8 import & export**, live **folder watching**, and an Up Next
+  queue with drag-and-drop reordering and bulk actions
+
+### 🎵 Playback that feels right
+
+- **All popular formats** — MP3, WAV, FLAC, OGG, OGA, Opus, M4A, AAC, WMA (FFmpeg-backed)
+- **Engine layer with graceful fallback** — an optional libmpv engine
+  (python-mpv) slots in beside the Qt engine and is picked up automatically
+  when present
+- **Real gapless playback and real crossfade** (0–12 s, equal-power curves)
+  via a dual-engine coordinator — on *any* engine
+- **10-band equalizer** with presets (Flat / Bass Boost / Rock / Night /
+  Vocal / Treble Boost / Custom — requires the mpv engine, clearly labeled)
+- **ReplayGain loudness normalization** (optional, cached), **pitch-preserving
+  playback speed** and optional **silence skipping**
+- **Bookmarks & auto-resume** for long files — perfect for audiobooks
+- **Internet radio & URL streams** (M3U/HLS) with saved stations
+- **Waveform seekbar** (background peaks via optional miniaudio, cached in
+  SQLite) and a **real FFT spectrum analyzer** computed from the actual audio
+  being played
+- **Smart shuffle** — tracks you haven't played this session come first;
+  everything gets a turn before anything repeats — plus history-aware Previous
+- **A-B Repeat & playback speed**, smooth volume fades, sleep timer
+- **OS media controls** — Windows SMTC + global media keys, Linux MPRIS
+- **Tray popup with volume & seek** — the glassy flyout above the taskbar
+  now carries a real progress bar (elapsed / total, click or drag to seek)
+  and a volume slider with mute toggle, always in sync with the main
+  player
 
 ### 🎨 A theme for every mood — built on color psychology
 
@@ -98,59 +191,61 @@ mode.
 | **Emerald Night** — nature, tranquility | **Fresh Sage** — balance, lowest eye strain |
 | **Obsidian Black** — rest & discipline | **Porcelain White** — clarity, Swiss-grid focus |
 
-The **brush button** in the sidebar opens a grouped DARK/LIGHT swatch picker,
-or enable *Auto theme* (Settings → Interface) to follow Windows' dark/light
-mode automatically.
+Open the swatch picker with the **brush button** or `Ctrl+P`, enable *Auto
+theme* to follow your OS dark/light mode — or let the optional **dynamic
+Material You-style theme** derive a fresh palette from the current album
+cover (Settings → Appearance).
 
-### 🎵 Playback that feels right
+### 🧭 A redesigned interface
 
-- **All popular formats** — MP3, WAV, FLAC, OGG, OGA, Opus, M4A, AAC, WMA (FFmpeg-backed)
-- **Smart shuffle** — tracks you haven't played this session come first; everything gets a turn before anything repeats
-- **History-aware Previous** — in shuffle mode, Previous retraces the *actual* listening path instead of picking a new random track
-- **A-B Repeat & Playback Speed** (0.5×–2×) tucked into the tidy **⋯ menu**
-- **Click-to-seek and drag-to-seek** progress bar with live time preview
-- **Smooth volume fades** on pause and track change (configurable)
-- **Global media keys** — Play/Pause/Stop/Next/Prev from your keyboard or headset
-- **Sleep timer** — stop playback after N minutes
-- **Album cover art** — extracted automatically from file metadata
+- A full **QSS design system** — typography scale, 10 px radii, layered
+  surfaces, hover/press states everywhere, modern scrollbars, menus,
+  tooltips, tabs and tables
+- **Command palette** (`Ctrl+K`) — every app command plus fuzzy search of
+  your tracks and albums
+- **Rebindable shortcuts** with conflict detection, **UI scale**
+  (0.75×–1.5×), and a "Reduce animations" setting
+- A rebuilt **Settings dialog** — 10 categories with live search across
+  every settings row
+- Labeled **sidebar with badges**, skeleton loading rows, friendly empty
+  states, and a glassy **tray popup** — transport, seek and volume — that
+  always sits exactly above the taskbar
 
-### 🧩 A redesigned player bar
+### 🎤 Lyrics that actually match
 
-The control cluster was decluttered: shuffle, lyrics, repeat and volume stay
-on the bar; less-used actions (A-B repeat, speed, track options) live behind
-the **⋯** button. Two-line track rows (bold title over muted artist) read
-like modern streaming apps, and the playing row glows gold.
+A much stronger search chain — filename/tag cleanup (leading track numbers,
+underscores, site spam), Windows-1256 mojibake repair, Persian/Arabic
+normalization, fuzzy matching with duration proximity — plus quality
+detection that flags short/spam/URL-laden text before you save it.
+Per-track **offsets**, a full **lyrics editor** (text + LRC timing), save to
+**file tag and/or `.lrc` sidecar**, **bilingual by-line translations** with
+RTL-correct rendering, a **floating desktop lyrics widget**, and a
+**Persian UI + RTL layout** option.
 
-### 🛞 A tray popup that actually works
+### 📊 Your listening, visualized
 
-Right-click the tray icon for a **glassy now-playing popup**: live cover art,
-title & artist, prev / play-pause / next that stay in sync with playback, and
-Show / Quit / **Close** buttons — always positioned exactly above the
-taskbar, never hidden behind it. Optionally, clicking the taskbar icon sends
-the window to the tray instead of minimizing (Settings → Interface).
-
-### 📚 Smart library
-
-- **Add folders** with recursive scanning; a filterable folder tree sidebar
-- **Albums grid** — covers grouped by album, built from the tag cache with a loading overlay (no UI freeze)
-- **Personal playlists** — create, rename, delete; add via right-click
-- **Duplicate finder** — review and clean copies without touching files on disk
-- **Two-line track lists** with background tag loading (instant first paint)
-- **Instant search**, sort by title / artist / date added / filename
-- **Drag & drop** folders or files from Explorer
-- **Track properties** — format, duration, bitrate, sample rate + Open File Location
-- **Listening stats** — total time & top artists, auto-refreshed every minute
-- **Tag editing** — fix title / artist / album / year / genre and the cover in-app
+Plays-over-time lines, minutes-per-month bars, top artists/genres charts, an
+expandable top-tracks list (10 → 100) with Play + ♥ per row, a daily
+listening heatmap, and a yearly **Wrapped-style report** you can export and
+share.
 
 ### 🛡️ Reliability by design
 
-- **Auto-update** — checks GitHub Releases once a day in the background; SHA-256-verified installers, non-intrusive in-app banner, self-update for installed editions (portable/source get a release-page link). Toggle or trigger manually in Settings → About
-- **Single-instance** — relaunching reveals the running window (even when it's hidden in the tray) and hands over any files the OS asked it to open
-- **"Open with" integration** — installer can register the player in Explorer's Open-with menu; opened files play as an ad-hoc queue
-- **Crash guard** — unexpected exceptions are logged, the app keeps running
-- **Rotating file log** at `~/.goldenmusic/goldenmusic.log`
-- **Validated config loading** — corrupted settings never crash startup
-- **Async everything** — background scanning, tag loading and cover art; no UI freezes even with 2000+ tracks
+- **Verified, rollback-safe migration** — the first 2.3 start backs up your
+  legacy JSON data (`backups/pre_sqlite_<timestamp>/`), migrates it to
+  SQLite in one atomic transaction and verifies row counts; any failure
+  rolls back to legacy JSON mode. Original files are never deleted
+- **Cross-platform** — a platform abstraction layer with the full test
+  matrix running on Windows *and* Linux in CI; Windows-first features
+  degrade gracefully elsewhere
+- **Auto-update** — SHA-256-verified installers from GitHub Releases,
+  checked at most once a day (Settings → Integrations)
+- **Single-instance** — relaunching reveals the running window (even when
+  it's hidden in the tray) and hands over any files the OS asked it to open
+- **"Open with" integration** — the installer can register the player in
+  Explorer's Open-with menu; opened files play as an ad-hoc queue
+- **Crash guard**, rotating file log, validated config loading — and async
+  everything: no UI freezes even with huge libraries
 
 ---
 
@@ -158,6 +253,12 @@ the window to the tray instead of minimizing (Settings → Interface).
 
 | Shortcut | Action |
 |----------|--------|
+| `Ctrl + K` | Command palette (commands + fuzzy track/album search) |
+| `Ctrl + P` | Theme picker |
+| `Ctrl + L` | Lyrics panel |
+| `Ctrl + Q` | Up Next queue |
+| `Ctrl + B` | Like the current track |
+| `Ctrl + R` | Rate the current track |
 | `Space` / `Enter` | Play / Pause (only when no list/input has focus) |
 | `Ctrl + ←` | Previous track |
 | `Ctrl + →` | Next track |
@@ -171,20 +272,25 @@ the window to the tray instead of minimizing (Settings → Interface).
 | `F11` / `F` | Fullscreen player (Esc leaves) |
 | `Esc` | Leave the fullscreen player |
 
-*Media keys (Play/Pause/Stop/Next/Prev) on your keyboard or headset work globally.*
+*Every shortcut is rebindable — with conflict detection — in
+Settings → Shortcuts. Media keys (Play/Pause/Stop/Next/Prev) on your
+keyboard or headset work globally.*
 
 ---
 
 ## 🚀 Quick Start
 
-### Option 1: Download Installer (Recommended)
+### Option 1: Download Installer (Windows, Recommended)
 
 1. Go to [Releases](../../releases)
-2. Download `GoldenMusicSetup-2.2.0.exe`
-3. Run the installer — it detects an existing installation and updates in place; your library, favorites and settings are preserved
+2. Download `GoldenMusicSetup-2.3.0.exe`
+3. Run the installer — it detects an existing installation and updates in place; your library, favorites, ratings and settings are preserved (the first 2.3 start migrates your data to SQLite — backed up and verified)
 4. Enjoy your music! 🎉
 
-### Option 2: Run from Source
+Linux users: see [INSTALLATION.md](INSTALLATION.md) for the run-from-source
+and packaging routes.
+
+### Option 2: Run from Source (Windows)
 
 ```bash
 # Clone the repository
@@ -201,6 +307,29 @@ pip install pywin32
 python main.pyw
 ```
 
+### Option 2b: Run from Source (Linux)
+
+```bash
+git clone https://github.com/Amirmpm/golden-music.git
+cd golden-music
+
+# Qt system libraries (Debian/Ubuntu) + an audio stack
+sudo apt install libegl1 libgl1 libxkbcommon0 libdbus-1-3 libfontconfig1
+# audio: pipewire (with pipewire-pulse) or pulseaudio — most desktops already have one
+
+pip install -r requirements.txt
+python main.pyw
+```
+
+**Optional extras** (everything degrades gracefully without them — details in
+[INSTALLATION.md](INSTALLATION.md)):
+
+```bash
+pip install miniaudio    # waveform seekbar + spectrum analyzer
+pip install python-mpv   # EQ, silence-skip, pitch-preserving speed (needs system libmpv)
+pip install qrcode       # QR pairing page for the Web Remote
+```
+
 ### Option 3: Build the Portable exe / Installer Yourself
 
 **Prerequisites:**
@@ -208,7 +337,7 @@ python main.pyw
 - [Inno Setup 6](https://jrsoftware.org/isdl.php) (installer only)
 
 ```bash
-# Optimized portable build only (~84 MB, trims unused Qt DLLs, UPX-packed)
+# Optimized portable build (trims unused Qt DLLs, enforces a size budget)
 python build_release.py
 
 # Full pipeline: tests -> exe -> installer
@@ -217,7 +346,7 @@ build_windows.bat
 
 Output:
 - `dist\GoldenMusic\GoldenMusic.exe` — The app (portable folder)
-- `dist\installer\GoldenMusicSetup-2.2.0.exe` — The installer
+- `dist\installer\GoldenMusicSetup-2.3.0.exe` — The installer
 
 ---
 
@@ -225,62 +354,56 @@ Output:
 
 ```
 golden-music/
-├── main.pyw                 # Main window, library, player bar, rail, pages
-├── config.py                # 12 themes, QSS builder, safe config loaders
-├── audio.py                 # QMediaPlayer audio backend
-├── audio_output.py          # Audio output device enumeration/switching
-├── playback_fx.py           # Speed, A-B repeat, volume fades
-├── playstats.py             # Listening statistics engine
-├── applog.py                # Rotating file logging + Qt message hook
-├── mediakeys.py             # Global Windows media key hotkeys
-├── trackinfo.py             # Track technical metadata reader
-├── track_info_dialog.py     # Properties dialog + Open File Location
-├── tag_editor.py            # Real tag editor — writes metadata to audio files
-├── playlist_dialog.py       # Personal playlists UI + store
-├── duplicates.py            # Duplicate grouping engine
-├── duplicates_dialog.py     # Duplicates review/cleanup dialog
-├── icons.py                 # File-based Lucide SVG icon library
-├── scanner.py               # Async folder scanner (QThread)
-├── coverart.py              # Album art extraction (thread-safe cache)
-├── widgets.py               # ClickableSlider widget
-├── tray_menu.py             # Glass tray popup (now playing + controls)
-├── theme_picker.py          # DARK/LIGHT grouped theme swatches
-├── settings_dialog.py       # Settings dialog (Appearance/Playback/Library/About)
-├── mini_player.py           # Compact floating player
-├── queue_panel.py           # Up-next queue panel
-├── lyrics.py / lyrics_panel.py  # Lyrics fetch + side panel
-├── autottheme.py            # Windows dark/light auto-theme watcher
-├── userbackup.py            # Config backup/restore
-├── scripts/                 # Offline test & tooling suites
-├── requirements.txt         # Python dependencies
+├── main.pyw / main.py       # Thin entry points (double-click / importable)
+├── gm/                      # The application package (v3)
+│   ├── core.py              # Shared state, enums, helpers
+│   ├── window.py / app.py   # MainWindow + app bootstrap
+│   ├── platforms.py         # Cross-platform OS layer (Windows/Linux/macOS)
+│   ├── db.py / store.py     # SQLite library (WAL + FTS5) + facades
+│   ├── migration.py         # Verified JSON → SQLite migration
+│   ├── player_adapter.py / audio_engines.py   # Engine layer (mpv → Qt fallback)
+│   ├── equalizer / crossfade / normalize /    # DSP-style playback extras
+│   │   silence_skip / waveform / spectrum
+│   ├── lyrics_*.py          # Search, quality, editor, translations, flow
+│   ├── webremote.py / telegrambot.py / mpris.py / remote_bridges.py
+│   ├── workers.py           # Background threads (scan, tags, covers)
+│   ├── i18n.py / prefs.py / theme_qss.py / dynamic_theme.py / m3u.py / smart.py
+│   └── ui/                  # sidebar, command_palette, pages3, settings3,
+│                            #   stats3, lyrics_ui, player_bar, widgets, ...
+├── config.py, icons.py, scanner.py, coverart.py, applog.py, ...
+│                            # Shared v2-era modules still in daily use
+│                            #   (themes/QSS, icons, scanning, logging, ...)
+├── scripts/                 # 24 offline test suites + tooling
+├── docs/DECISIONS.md        # Architecture decision log
+├── requirements.txt         # Hard deps + documented optional extras
 ├── goldenmusic.spec         # PyInstaller spec (optimized)
 ├── goldenmusic.iss          # Inno Setup installer script
-├── build_release.py         # Optimized exe build + trim + size report
+├── build_release.py         # Optimized exe build + optional code signing
 ├── build_windows.bat        # One-click: tests -> exe -> installer
-├── .github/workflows/       # CI: tests + Bandit + build artifacts
+├── .github/workflows/       # CI: Windows+Linux matrices, Bandit, build
 ├── assets/                  # App icon, logo, Lucide SVG icon set
 ├── screenshots/             # App screenshots for README
 ├── LICENSE                  # MIT License
-├── CONTRIBUTING.md          # Contribution guidelines
-├── CHANGELOG.md             # Version history
-├── INSTALLATION.md          # Detailed installation guide
-└── .gitignore               # Git ignore rules
+└── CONTRIBUTING.md / CHANGELOG.md / INSTALLATION.md
 ```
 
 ---
 
 ## 🎨 Themes in depth
 
-Golden Music v2.0 replaces ad-hoc palettes with a coherent,
-**color-psychology suite**: six black-dominant dark themes and six
-white-dominant light themes — monochrome plus gold, blue, purple, pink and
-green. Every palette passed WCAG contrast verification before shipping, and
-light themes were overhauled in v2.0.1 to stay readable even when Windows
-itself runs in the opposite mode (tooltips, dialogs, tray popup, stats page).
+Golden Music 2.3 keeps the **color-psychology suite** introduced in v2.0 —
+six black-dominant dark themes and six white-dominant light themes,
+monochrome plus gold, blue, purple, pink and green — and rebuilds every
+control around it with a proper QSS design system (`gm/theme_qss.py`): a
+typography scale, 10 px radii, layered surfaces, hover/press states, modern
+scrollbars, menus, tooltips, tabs and tables. Every palette passed WCAG
+contrast verification before shipping, and light themes stay readable even
+when the OS itself runs in the opposite mode.
 
-Click the **brush icon** in the sidebar to open the swatch picker and switch
-instantly — or enable *Auto theme* (Settings → Interface) and follow
-Windows' dark/light mode.
+Open the swatch picker (**brush icon** or `Ctrl+P`) to switch instantly —
+or enable *Auto theme* to follow your OS dark/light mode, or the optional
+dynamic Material You-style theme derived from the current album cover
+(Settings → Appearance).
 
 ---
 
@@ -290,7 +413,10 @@ Windows' dark/light mode.
 |------------|---------|
 | ![Python](https://img.shields.io/badge/Python-3.11+-3776AB) | Core language |
 | ![PyQt6](https://img.shields.io/badge/PyQt6-6.11+-41CD52) | GUI framework |
+| ![SQLite](https://img.shields.io/badge/SQLite-3%20%2B%20FTS5-003B57) | Library database & full-text search |
 | ![mutagen](https://img.shields.io/badge/mutagen-1.47+-blue) | Audio metadata |
+| libmpv *(optional)* | EQ / crossfade / silence-skip audio engine |
+| miniaudio *(optional)* | Waveform seekbar & spectrum decoding |
 | ![PyInstaller](https://img.shields.io/badge/PyInstaller-6.10+-red) | EXE packaging |
 | ![Inno Setup](https://img.shields.io/badge/Inno_Setup-6-orange) | Windows installer |
 
@@ -298,14 +424,17 @@ Windows' dark/light mode.
 
 ## 📦 Configuration
 
-Golden Music stores its configuration at:
+Golden Music stores its data at `%USERPROFILE%\.goldenmusic\` on Windows
+(`~/.goldenmusic/` on Linux):
 
 ```
-%USERPROFILE%\.goldenmusic\
-├── config.json          # App settings, library, favorites
-├── tag_cache.json       # Cached metadata for instant loading
-├── stats.json           # Listening statistics
-├── backups/             # Automatic config backups on startup
+~/.goldenmusic/
+├── library.db           # SQLite library: tracks, tags, FTS index, favorites,
+│                        #   playlists, ratings, play history, bookmarks,
+│                        #   radio stations, waveform cache
+├── config.json          # App settings & preferences
+├── lyrics_cache/        # Cached lyrics
+├── backups/             # Automatic backups (incl. pre_sqlite_<timestamp>/)
 └── goldenmusic.log      # Rotating diagnostics log
 ```
 
@@ -314,11 +443,32 @@ Golden Music stores its configuration at:
 USB-stick installs.
 
 **What's stored:**
-- Added folders, library tracks, favorites, playlists
-- Last played track and position
-- Volume, theme, shuffle/repeat state
-- Window geometry
+- Library tracks with tags, favorites, playlists, ratings and play history
+  (in `library.db`)
+- Last played track and position; bookmarks for long files
+- Volume, theme, shuffle/repeat state, window geometry
 - All settings preferences
+
+On the first 2.3 start, legacy `config.json` / `tag_cache.json` /
+`stats.json` library data is migrated into `library.db` — backup-first,
+verified, and rollback-safe (the originals are never deleted).
+
+---
+
+## 📡 Remote Control (optional — off by default)
+
+- **Web Remote** — a LAN-only web server built on the Python standard
+  library (no extra dependencies) with token authentication (constant-time
+  compare), a QR pairing page, per-IP rate limiting and a mobile-friendly
+  offline single-page UI. Enable it in Settings → Integrations, then open
+  the pairing URL on your phone
+- **Telegram bot** — control playback with `/play` `/pause` `/next` `/prev`
+  `/status` `/volume` `/search` `/list` from any chat. You supply your own
+  bot token and allow-list the user IDs that may use it (Settings →
+  Integrations)
+
+Both remotes are **disabled by default** and never touch Qt objects from
+their worker threads — every action is queued onto the GUI thread.
 
 ---
 
@@ -345,7 +495,7 @@ This project is licensed under the MIT License — see [LICENSE](LICENSE) for de
 
 <div align="center">
 
-**Made with 🎵 and ❤️ for Windows**
+**Made with 🎵 and ❤️ for Windows & Linux**
 
 ⭐ Star this repo if Golden Music makes your listening better!
 

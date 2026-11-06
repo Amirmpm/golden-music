@@ -14,3 +14,17 @@ pywin32>=306; sys_platform == "win32"
 # For building the .exe (run on Windows)
 # Bounded below 7.x — major bumps must be reviewed before adopting
 pyinstaller>=6.10.0,<7
+
+# ---- v3.0 OPTIONAL extras (all degrade gracefully when missing) ----
+# Real FFT visualizer + waveform seekbar generation (decode-side analysis)
+miniaudio>=1.61; sys_platform != "darwin"
+
+# libmpv audio engine: 10-band EQ, pitch-preserving speed, silence skip,
+# gapless/crossfade on any format. Requires libmpv on the system.
+# python-mpv>=1.0; sys_platform != "darwin"
+
+# QR pairing page for the Web Remote (falls back to a text token)
+qrcode>=7.4; python_version >= "3.8"
+
+# Linux MPRIS media controls (optional, auto-detected)
+# dbus-python; sys_platform == "linux"
