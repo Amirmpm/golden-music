@@ -21,5 +21,13 @@ from gm.app import (  # noqa: F401
 )
 from random import choice, randrange  # noqa: F401  (legacy module surface)
 
+# legacy module surface: v2 main.pyw exposed these Qt names at module level
+# and some local scripts still read them via `main.<name>`.
+from PyQt6.QtWidgets import (  # noqa: F401
+    QLabel, QApplication, QMessageBox, QWidget, QPushButton,
+)
+from PyQt6.QtCore import Qt  # noqa: F401
+from PyQt6.QtGui import QIcon, QPixmap  # noqa: F401
+
 if __name__ == "__main__":
     raise SystemExit(main())

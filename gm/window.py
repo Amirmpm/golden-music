@@ -75,11 +75,19 @@ from gm.ui.widgets import (
 )
 from gm.ui.delegates import TrackRowDelegate
 from gm.ui.player_bar import PlayerBar
-from gm.ui.rail import SideRail
+from gm.ui.rail import SideRail  # v2 rail kept for fallback
+from gm.ui.sidebar import Sidebar
+from gm import i18n
+from gm.prefs import DEFAULT_PREFS, merge_prefs
 from gm.ui.stats_widgets import StatsChartBar, StatTrackRow
 from gm.workers import (
     CoverLoaderThread, TagLoaderThread, AlbumsWorkerThread, StoreInitWorker,
 )
+from gm.ui.pages3 import (
+    AlbumsPage, ArtistsPage, GenresPage, PlaylistsPage3, LibraryTable,
+)
+from gm.ui.stats3 import StatsPage3
+from gm.ui.command_palette import CommandPalette
 
 
 class MainWindow(QMainWindow):
@@ -108,6 +116,8 @@ class MainWindow(QMainWindow):
         self.store = None
         self._store_worker = None
         self._pending_cfg = None
+        # v3.0: user preferences dict (validated overlay in config.json)
+        self.prefs = dict(DEFAULT_PREFS)
         self.current_track = None
         self.current_index = -1
         self.current_playlist = []
@@ -345,8 +355,9 @@ class MainWindow(QMainWindow):
         top.setContentsMargins(0, 0, 0, 0)
         top.setSpacing(0)
 
-        self.rail = SideRail(self.theme)
-        self.rail.rail_clicked.connect(self._on_rail_clicked)
+        self.rail = Sidebar(self.theme)
+        self.rail.nav_requested.connect(self._on_rail_clicked)
+        self.sidebar = self.rail            # v3 name
         top.addWidget(self.rail)
 
         # Loading overlay (covers the whole window during slow operations)
@@ -421,10 +432,20 @@ class MainWindow(QMainWindow):
         # Stack
         self.stack = QStackedWidget()
         self.stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.stack.addWidget(self._build_library_page())
-        self.stack.addWidget(self._build_favorites_page())
-        self.stack.addWidget(self._build_albums_page())
-        self.stack.addWidget(self._build_stats_page())
+        self.stack.addWidget(self._build_library_page())      # 0 library
+        self.stack.addWidget(self._build_favorites_page())    # 1 favorites
+        self.albums_page = AlbumsPage(self)                   # 2 albums
+        self.stack.addWidget(self.albums_page)
+        self.stats_page = StatsPage3(self)                    # 3 stats
+        self.stack.addWidget(self.stats_page)
+        self.artists_page = ArtistsPage(self)                 # 4 artists
+        self.stack.addWidget(self.artists_page)
+        self.genres_page = GenresPage(self)                   # 5 genres
+        self.stack.addWidget(self.genres_page)
+        self.playlists_page = PlaylistsPage3(self)            # 6 playlists
+        self.stack.addWidget(self.playlists_page)
+        self.radio_page = self._build_radio_page()            # 7 radio
+        self.stack.addWidget(self.radio_page)
         self.main_layout.addWidget(self.stack, 1)
 
         top.addWidget(self.main_area, 1)
@@ -850,6 +871,16 @@ class MainWindow(QMainWindow):
         return page
 
     def _refresh_stats_view(self):
+        """v3: delegates to the StatsPage3 widget (kept for timer compat)."""
+        page = getattr(self, "stats_page", None)
+        if page is not None:
+            try:
+                page.refresh()
+                return
+            except Exception:
+                log.exception("stats page refresh failed")
+
+    def _refresh_stats_view_legacy(self):
         if not getattr(self, "stats", None) or not getattr(self, "_stats_built", False):
             return
         from playstats import PlayStats
@@ -1147,7 +1178,16 @@ class MainWindow(QMainWindow):
         self.theme = Theme.get(self.theme_name)
         theme_changed = (getattr(self, "_last_theme", None) or {}).get("name") \
             != self.theme.get("name")
-        qss = build_qss(self.theme)
+        # v3 design system QSS (typography scale + modern components);
+        # falls back to the v2 builder if the module is unavailable.
+        try:
+            from gm.theme_qss import build_qss_v3
+            qss = build_qss_v3(self.theme,
+                               scale=float(self.prefs.get("ui_scale", 1.0)),
+                               reduce_animations=bool(
+                                   self.prefs.get("reduce_animations", False)))
+        except Exception:
+            qss = build_qss(self.theme)
         # Apply at BOTH levels: on the window for its children (as before)
         # and on the application so top-level popups that are not QObject
         # children of the window — QTipLabel tooltips above all — inherit
@@ -1159,6 +1199,19 @@ class MainWindow(QMainWindow):
         self._sync_app_palette()
         if hasattr(self, "rail"):
             self.rail.set_theme(self.theme)
+        for page in ("albums_page", "artists_page", "genres_page",
+                     "playlists_page", "stats_page"):
+            w = getattr(self, page, None)
+            if w is not None:
+                try:
+                    w.set_theme(self.theme)
+                except Exception:
+                    pass
+        if getattr(self, "_palette", None) is not None:
+            try:
+                self._palette.set_theme(self.theme)
+            except Exception:
+                pass
         if hasattr(self, "_track_delegate"):
             self._track_delegate.set_theme(self.theme)
         if hasattr(self, "_fav_delegate"):
@@ -1249,32 +1302,45 @@ class MainWindow(QMainWindow):
                 lst.scrollToItem(it, QListWidget.ScrollHint.PositionAtCenter)
                 break
 
+    #: stack index per nav key (kept explicit for tests/timers)
+    _PAGE_INDEX = {"library": 0, "favorites": 1, "albums": 2, "stats": 3,
+                   "artists": 4, "genres": 5, "playlists": 6, "radio": 7}
+
     def _on_rail_clicked(self, key: str):
-        # Rail exclusivity: only the active nav button stays checked.
-        # setChecked alone doesn't always repaint the QSS :checked state when
-        # the mouse is still over the old button — force a style refresh.
-        nav = {"library": self.rail.btn_library,
-               "favorites": self.rail.btn_favorites,
-               "albums": self.rail.btn_albums,
-               "stats": self.rail.btn_stats}
-        for k, btn in nav.items():
-            if btn.isChecked() != (k == key):
-                btn.setChecked(k == key)
-                btn.update_icon()
-                btn.style().unpolish(btn)
-                btn.style().polish(btn)
-        if key == "library":
-            self.current_view = View.LIBRARY
-            self.stack.setCurrentIndex(0)
-            self.page_title.setText("Library")
-            self.rail.btn_library.setChecked(True)
-            self._update_count_label()
-        elif key == "favorites":
-            self.current_view = View.FAVORITES
-            self.stack.setCurrentIndex(1)
-            self.page_title.setText("Favorites")
-            self.rail.btn_favorites.setChecked(True)
-            self._update_count_label()
+        """v3 navigation router: sidebar keys -> stack pages/actions."""
+        from gm.i18n import tr
+        # sidebar exclusivity (v3 Sidebar.set_active handles QButtonGroup)
+        try:
+            self.rail.set_active(key if key in self._PAGE_INDEX else key)
+        except Exception:
+            pass
+        if key in self._PAGE_INDEX:
+            idx = self._PAGE_INDEX[key]
+            self.stack.setCurrentIndex(idx)
+            titles = {"library": "Library", "favorites": "Favorites",
+                      "albums": "Albums", "stats": "Stats",
+                      "artists": "Artists", "genres": "Genres",
+                      "playlists": "Playlists", "radio": "Radio"}
+            self.page_title.setText(titles.get(key, ""))
+            if key in ("library", "favorites"):
+                self.current_view = (View.LIBRARY if key == "library"
+                                     else View.FAVORITES)
+                self._update_count_label()
+            else:
+                # browsing pages act within the library context
+                self.current_view = View.LIBRARY
+            if key == "albums":
+                self.albums_page.refresh()
+            elif key == "stats":
+                self.stats_page.refresh()
+            elif key == "artists":
+                self.artists_page.refresh()
+            elif key == "genres":
+                self.genres_page.refresh()
+            elif key == "playlists":
+                self.playlists_page.refresh()
+            elif key == "radio":
+                self._refresh_radio_page()
         elif key == "refresh":
             self._on_refresh()
         elif key == "addfolder":
@@ -1283,23 +1349,22 @@ class MainWindow(QMainWindow):
             self._show_theme_picker()
         elif key == "settings":
             self._show_settings()
-        elif key == "albums":
-            self.current_view = View.LIBRARY
-            self.page_title.setText("Albums")
-            self.rail.btn_albums.setChecked(True)
-            self.stack.setCurrentIndex(2)
-            # Grid builds from the tag cache instantly; untagged tracks are
-            # grouped by the background worker (spinner until done).
-            self._rebuild_albums_grid()
-        elif key == "stats":
-            self.stack.setCurrentIndex(3)
-            self.page_title.setText("Listening Stats")
-            self.rail.btn_stats.setChecked(True)
-            self._refresh_stats_view()
-        elif key == "playlists":
-            self._show_playlists()
+        elif key == "command":
+            self._show_command_palette()
         elif key == "mini":
             self._toggle_mini_player()
+        elif key == "more_duplicates":
+            self._open_duplicates_dialog()
+        elif key == "more_backup":
+            self._open_backup_restore()
+        elif key == "more_export":
+            self._export_all_playlists_m3u()
+
+    @property
+    def albums_grid(self):
+        """v2 compat: the albums grid widget inside the v3 AlbumsPage."""
+        page = getattr(self, "albums_page", None)
+        return getattr(page, "_grid", None) if page is not None else None
 
     def _show_playlists(self):
         try:
@@ -1347,7 +1412,12 @@ class MainWindow(QMainWindow):
         self._save_config()
 
     def _show_settings(self):
-        dlg = SettingsDialog(self, self)
+        try:
+            from gm.ui.settings3 import SettingsDialog3
+            dlg = SettingsDialog3(self, self)
+        except Exception:
+            log.exception("v3 settings failed; using legacy dialog")
+            dlg = SettingsDialog(self, self)
         dlg.exec()
 
     def _toggle_mini_player(self):
@@ -3756,6 +3826,980 @@ class MainWindow(QMainWindow):
             self._save_timer.timeout.connect(self._save_config)
         self._save_timer.start()
 
+
+    # ==================================================================
+    # v3.0 — preferences, command palette, radio, M3U, shortcuts, watch
+    # ==================================================================
+    def _load_prefs(self, cfg: dict):
+        from gm.prefs import merge_prefs
+        self.prefs = merge_prefs((cfg or {}).get("prefs"))
+        try:
+            from gm.ui import animations
+            animations.set_reduce_animations(
+                bool(self.prefs.get("reduce_animations", False)))
+        except Exception:
+            pass
+        try:
+            from gm import i18n
+            i18n.set_language(self.prefs.get("language", "en"))
+            app_inst = QApplication.instance()
+            if app_inst is not None:
+                from PyQt6.QtCore import Qt as _Qt
+                app_inst.setLayoutDirection(
+                    _Qt.LayoutDirection.RightToLeft if i18n.is_rtl()
+                    else _Qt.LayoutDirection.LeftToRight)
+        except Exception:
+            pass
+
+    def apply_prefs(self, new_prefs: dict):
+        """SettingsDialog3 OK handler: validate, persist, live-apply."""
+        from gm.prefs import merge_prefs
+        if not isinstance(new_prefs, dict):
+            return
+        if new_prefs.get("___reset___"):
+            new_prefs = {}
+        self.prefs = merge_prefs({**self.prefs, **new_prefs})
+        try:
+            from gm.ui import animations
+            animations.set_reduce_animations(
+                bool(self.prefs.get("reduce_animations", False)))
+        except Exception:
+            pass
+        # language + RTL
+        try:
+            from gm import i18n
+            i18n.set_language(self.prefs.get("language", "en"))
+            app_inst = QApplication.instance()
+            if app_inst is not None:
+                from PyQt6.QtCore import Qt as _Qt
+                app_inst.setLayoutDirection(
+                    _Qt.LayoutDirection.RightToLeft if i18n.is_rtl()
+                    else _Qt.LayoutDirection.LeftToRight)
+        except Exception:
+            pass
+        # live theme refresh (scale/animation styling)
+        self._apply_theme()
+        # audio engine / EQ / crossfade / normalization
+        self._apply_audio_prefs()
+        # smart playlists opt-in set
+        self._sync_smart_playlists()
+        # folder watcher
+        self._apply_folder_watch()
+        # remotes
+        self._apply_remote_prefs()
+        # floating lyrics
+        self._apply_floating_lyrics()
+        # shortcuts rebuilt
+        self._setup_shortcuts()
+        self._save_config()
+
+    # ---------------- settings-dialog request hooks (guarded API) ------
+    def request_theme_picker(self):
+        self._show_theme_picker()
+
+    def request_theme_refresh(self):
+        self._apply_theme()
+
+    def request_ui_scale(self, scale):
+        try:
+            self.prefs["ui_scale"] = max(0.75, min(1.5, float(scale)))
+        except (TypeError, ValueError):
+            return
+        self._apply_theme()
+
+    def request_output_picker(self):
+        try:
+            from audio_output import list_output_devices
+            devs = list_output_devices()
+            if not devs:
+                return
+            from PyQt6.QtWidgets import QInputDialog
+            names = [d[0] for d in devs]
+            cur = getattr(self, "audio_output_id", "") or ""
+            cur_idx = 0
+            for i, d in enumerate(devs):
+                if d[1] == cur:
+                    cur_idx = i
+                    break
+            name, ok = QInputDialog.getItem(
+                self, "Audio Output", "Output device:", names, cur_idx, False)
+            if ok:
+                for i, d in enumerate(devs):
+                    if d[0] == name:
+                        self._switch_audio_output(i)
+                        break
+        except Exception:
+            log.exception("output picker failed")
+
+    def request_update_check(self):
+        try:
+            self._run_update_check(manual=True)
+        except Exception:
+            log.exception("manual update check failed")
+
+    def request_open_log(self):
+        try:
+            from applog import log_file_path
+            from gm.platforms import open_file_location
+            open_file_location(str(log_file_path()))
+        except Exception:
+            pass
+
+    def request_open_repo(self):
+        from gm.platforms import open_url
+        open_url("https://github.com/Amirmpm/golden-music")
+
+    def request_clear_lyrics_cache(self):
+        try:
+            import shutil
+            cache_dir = config_path().parent / "lyrics_cache"
+            if cache_dir.is_dir():
+                shutil.rmtree(str(cache_dir), ignore_errors=True)
+            self._show_toast("Lyrics cache cleared")
+        except Exception:
+            log.exception("lyrics cache clear failed")
+
+    def request_clear_waveform_cache(self):
+        try:
+            if getattr(self, "store", None) is not None:
+                with self.store.db._tx() as conn:
+                    conn.execute("DELETE FROM waveform_cache")
+            self._show_toast("Waveform cache cleared")
+        except Exception:
+            log.exception("waveform cache clear failed")
+
+    def request_telegram_test(self):
+        ok = False
+        try:
+            from gm.telegrambot import validate_token_format
+            token = self.prefs.get("telegram_bot_token", "")
+            ok = validate_token_format(token)
+        except Exception:
+            ok = False
+        self._show_toast("Telegram token looks valid" if ok else
+                         "Telegram token invalid")
+
+    # ---------------- command palette -----------------------------------
+    def _command_actions(self):
+        acts = []
+        add = lambda icon, title, group, run, hint=None: acts.append(
+            {"icon": icon, "title": title, "group": group, "run": run,
+             **({"hint": hint} if hint else {})})
+        add(Icon.PLAY, "Play / Pause", "Playback",
+            lambda: self._on_play_pause_requested()
+            if hasattr(self, "_on_play_pause_requested") else self.audio.play(),
+            "Space")
+        add(Icon.NEXT, "Next track", "Playback", self._on_next, "Ctrl+→")
+        add(Icon.PREV, "Previous track", "Playback", self._on_prev, "Ctrl+←")
+        add(Icon.SHUFFLE, "Toggle shuffle", "Playback", self._on_shuffle_toggled)
+        add(Icon.REPEAT, "Cycle repeat mode", "Playback", self._on_repeat_toggled)
+        add(Icon.HEART, "Like current track", "Playback",
+            lambda: self._toggle_favorite_for(self.current_track)
+            if self.current_track else None, "Ctrl+B")
+        add(Icon.LYRICS, "Toggle lyrics panel", "View",
+            self._toggle_lyrics_panel, "Ctrl+L")
+        add(Icon.QUEUE, "Toggle queue panel", "View",
+            self._toggle_queue_panel if hasattr(self, "_toggle_queue_panel")
+            else (lambda: None))
+        add(Icon.MINIMIZE, "Mini player", "View", self._toggle_mini_player, "Ctrl+M")
+        add(Icon.MAXIMIZE, "Fullscreen player", "View",
+            self._toggle_fullscreen_player, "F11")
+        for key, title in (("library", "Go to Library"), ("favorites", "Go to Favorites"),
+                           ("albums", "Go to Albums"), ("artists", "Go to Artists"),
+                           ("genres", "Go to Genres"), ("playlists", "Go to Playlists"),
+                           ("radio", "Go to Radio"), ("stats", "Go to Stats")):
+            add(Icon.LIBRARY, title, "Navigation",
+                lambda k=key: self._on_rail_clicked(k))
+        add(Icon.BRUSH, "Switch theme", "Appearance", self._show_theme_picker)
+        add(Icon.SETTINGS, "Open settings", "Appearance", self._show_settings)
+        add(Icon.FOLDER_ADD, "Add music folder", "Library", self._on_add_folder)
+        add(Icon.REFRESH, "Rescan library", "Library", self._on_refresh)
+        add(Icon.DOWNLOAD, "Export playlists (M3U)", "Library",
+            self._export_all_playlists_m3u)
+        add(Icon.QUEUE, "Play next: current album", "Queue",
+            lambda: self._play_next_album())
+        return acts
+
+    def _command_search(self, query):
+        """Quick search provider: tracks + albums + artists + playlists."""
+        results = []
+        q = (query or "").strip()
+        if not q or len(q) < 2:
+            return results
+        try:
+            paths = self._get_filtered_sorted_library() if not q else None
+        except Exception:
+            paths = None
+        try:
+            if getattr(self, "store", None) is not None:
+                hits = self.store.search(q, 14)
+            else:
+                hits = [p for p in (paths or self.library)][:14]
+                hits = [p for p in hits if q.lower() in os.path.basename(p).lower()][:10]
+            for p in hits[:10]:
+                title, artist = self._tag_cache.get(p, (os.path.splitext(
+                    os.path.basename(p))[0], ""))
+                results.append({
+                    "icon": Icon.MUSIC_NOTE, "title": title or os.path.basename(p),
+                    "subtitle": artist or "—",
+                    "run": (lambda path=p: self._play_path_standalone(path)),
+                })
+        except Exception:
+            log.exception("palette search failed")
+        # albums / artists quick entries
+        try:
+            if getattr(self, "store", None) is not None:
+                for alb in self.store.db.album_groups()[:400]:
+                    if q.lower() in (alb["album"] or "").lower():
+                        results.append({
+                            "icon": Icon.ALBUMS, "title": alb["album"],
+                            "subtitle": f"Album · {alb['artist']}",
+                            "run": (lambda a=alb["album"], ar=alb["artist"]:
+                                    self._open_album_from_palette(a, ar)),
+                        })
+                        if len(results) >= 16:
+                            break
+        except Exception:
+            pass
+        return results
+
+    def _open_album_from_palette(self, album, artist):
+        try:
+            self._on_rail_clicked("albums")
+            page = self.albums_page
+            page._open_album((album, artist))
+        except Exception:
+            log.exception("palette album open failed")
+
+    def _play_path_standalone(self, path):
+        if path and path in self.library:
+            idx = self.library.index(path)
+            self._play_from_list(list(self.library), idx, self.current_view)
+        elif path:
+            self._play_from_list([path], 0, self.current_view)
+
+    def _show_command_palette(self):
+        try:
+            if getattr(self, "_palette", None) is None:
+                self._palette = CommandPalette(
+                    self, self._command_actions, self._command_search)
+                self._palette.set_theme(self.theme)
+            self._palette.popup()
+        except Exception:
+            log.exception("command palette failed")
+
+    def _play_next_album(self):
+        try:
+            cur = self.current_track
+            if not cur:
+                return
+            info = (self.store.db.get_track(cur) if getattr(self, "store", None)
+                    else None)
+            if info and info.get("album"):
+                album_tracks = self.store.db.tracks_where(
+                    "album=?", (info["album"],), order="track_no")
+                rest = [t["path"] for t in album_tracks if t["path"] != cur]
+                if rest:
+                    self._insert_next(rest)
+                    self._show_toast(f"Queued {len(rest)} tracks from album")
+                    return
+            folder = os.path.dirname(cur)
+            self._insert_next([p for p in self.current_playlist
+                               if os.path.dirname(p) == folder and p != cur])
+        except Exception:
+            log.exception("play next album failed")
+
+    # ---------------- shortcuts (v3 rebindable) -------------------------
+    _SHORTCUT_DEFAULTS = [
+        ("play_pause", "Play / Pause", "Space"),
+        ("prev", "Previous track", "Ctrl+Left"),
+        ("next", "Next track", "Ctrl+Right"),
+        ("volume_up", "Volume up", "Ctrl+Up"),
+        ("volume_down", "Volume down", "Ctrl+Down"),
+        ("search_focus", "Focus search", "Ctrl+F"),
+        ("command_palette", "Command palette", "Ctrl+K"),
+        ("mini_player", "Mini player", "Ctrl+M"),
+        ("jump_playing", "Jump to playing track", "Ctrl+J"),
+        ("fullscreen", "Fullscreen player", "F11"),
+        ("lyrics_panel", "Lyrics panel", "Ctrl+L"),
+        ("queue_panel", "Queue panel", "Ctrl+Q"),
+        ("toggle_favorite", "Like current track", "Ctrl+B"),
+        ("sleep_timer", "Sleep timer", "Ctrl+T"),
+        ("theme_picker", "Theme picker", "Ctrl+P"),
+        ("rate_current", "Rate current track", "Ctrl+R"),
+    ]
+
+    def shortcut_defs(self):
+        return [dict(id=i, title=t, default=d)
+                for i, t, d in self._SHORTCUT_DEFAULTS]
+
+    def _shortcut_key(self, action_id: str) -> str:
+        custom = self.prefs.get("custom_shortcuts", {})
+        if isinstance(custom, dict) and custom.get(action_id):
+            seq = str(custom[action_id])
+            if seq.strip():
+                return seq
+        for i, _t, d in self._SHORTCUT_DEFAULTS:
+            if i == action_id:
+                return d
+        return ""
+
+    def _setup_shortcuts(self):
+        """(Re)bind global window shortcuts; v3 honors custom bindings."""
+        try:
+            self._setup_shortcuts_v3()
+        except Exception:
+            log.exception("v3 shortcut setup failed")
+
+    def _setup_shortcuts_v3(self):
+        # remove previous
+        for sc in getattr(self, "_v3_shortcuts", []):
+            try:
+                sc.setEnabled(False)
+                sc.deleteLater()
+            except Exception:
+                pass
+        self._v3_shortcuts = []
+        from PyQt6.QtGui import QShortcut, QKeySequence
+        actions = {
+            "search_focus": lambda: (self.search_edit.setFocus(),
+                                     self.search_edit.selectAll()),
+            "command_palette": self._show_command_palette,
+            "mini_player": self._toggle_mini_player,
+            "jump_playing": self._jump_to_playing,
+            "prev": self._on_prev,
+            "next": self._on_next,
+            "fullscreen": self._toggle_fullscreen_player,
+            "lyrics_panel": self._toggle_lyrics_panel,
+            "queue_panel": (self._toggle_queue_panel
+                            if hasattr(self, "_toggle_queue_panel")
+                            else (lambda: None)),
+            "toggle_favorite": lambda: self._toggle_favorite_for(
+                self.current_track) if self.current_track else None,
+            "sleep_timer": (self._show_sleep_dialog
+                            if hasattr(self, "_show_sleep_dialog")
+                            else (lambda: None)),
+            "theme_picker": self._show_theme_picker,
+            "rate_current": self._rate_current_dialog,
+        }
+        volume_up = lambda: self.player_bar.vol_slider.setValue(
+            min(100, self.player_bar.vol_slider.value() + 5))
+        volume_down = lambda: self.player_bar.vol_slider.setValue(
+            max(0, self.player_bar.vol_slider.value() - 5))
+        for aid in ("volume_up", "volume_down"):
+            actions[aid] = (volume_up if aid == "volume_up" else volume_down)
+        for aid, handler in actions.items():
+            key = self._shortcut_key(aid)
+            if not key:
+                continue
+            try:
+                sc = QShortcut(QKeySequence(key), self)
+                sc.activated.connect(lambda h=handler: h())
+                self._v3_shortcuts.append(sc)
+            except Exception:
+                log.warning("bad shortcut binding %s=%s", aid, key)
+
+    def _rate_current_dialog(self):
+        """Quick star-rating popup for the current track (Ctrl+R)."""
+        if not self.current_track:
+            return
+        try:
+            current = 0
+            if getattr(self, "store", None) is not None:
+                tr = self.store.db.get_track(self.current_track)
+                current = (tr or {}).get("rating", 0) or 0
+            from PyQt6.QtWidgets import QDialog, QHBoxLayout, QPushButton
+            from icons import Icon as _I, render_icon as _ri, get_dpr as _gd
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Rate track")
+            lay = QHBoxLayout(dlg)
+            lay.setContentsMargins(14, 12, 14, 12)
+            dpr = _gd()
+            for stars in range(1, 6):
+                b = QPushButton()
+                b.setFlat(True)
+                b.setFixedSize(40, 40)
+                b.setIcon(_ri(_I.STAR if stars > current else _I.STAR_FILLED,
+                              22, self.theme["gold"], dpr))
+                b.clicked.connect(lambda _c=False, st=stars: (
+                    self._set_track_rating(self.current_track, st), dlg.accept()))
+                lay.addWidget(b)
+            dlg.exec()
+        except Exception:
+            log.exception("rate dialog failed")
+
+    def _set_track_rating(self, path, stars: int):
+        """Persist a 0-5 star rating (DB + file tags when supported)."""
+        if not path:
+            return
+        stars = max(0, min(5, int(stars)))
+        try:
+            if getattr(self, "store", None) is not None:
+                self.store.db.set_rating(path, stars)
+        except Exception:
+            log.exception("rating store failed")
+        try:
+            from gm.rating_tags import write_rating
+            write_rating(path, stars)
+        except Exception:
+            log.exception("rating tag write failed (non-fatal)")
+        self._show_toast(f"Rated {'★' * stars or '—'}")
+        try:
+            self._highlight_playing_in_lists()
+        except Exception:
+            pass
+
+    def _toggle_favorite_for(self, path):
+        if not path:
+            return
+        if path in self.favorites:
+            self.favorites.discard(path)
+        else:
+            self.favorites.add(path)
+        self.player_bar.update_like_button(path in self.favorites)
+        self._rebuild_favorites_list()
+        self._save_config()
+
+    # ---------------- smart playlists sync ------------------------------
+    def _sync_smart_playlists(self):
+        try:
+            store = getattr(self, "store", None)
+            if store is None or getattr(store, "db", None) is None:
+                return
+            wanted = []
+            if self.prefs.get("smart_most_played"):
+                wanted.append("most_played")
+            if self.prefs.get("smart_recently_added"):
+                wanted.append("recently_added")
+            if self.prefs.get("smart_never_played"):
+                wanted.append("never_played")
+            if self.prefs.get("smart_not_heard_recently"):
+                wanted.append("not_heard_recently")
+            if self.prefs.get("smart_top_rated"):
+                wanted.append("top_rated")
+            existing = {p["name"] for p in store.smart_playlists()}
+            from gm.smart import BUILTINS
+            for key in wanted:
+                label = BUILTINS[key]["label"]
+                if label not in existing:
+                    store.ensure_smart_playlist(key)
+            # remove smart playlists whose toggle went off
+            for pl in store.smart_playlists():
+                if pl["name"] not in {BUILTINS[k]["label"] for k in wanted}:
+                    store.db.delete_playlist(pl["id"])
+        except Exception:
+            log.exception("smart playlist sync failed")
+
+    def smart_playlist_rows(self):
+        rows = []
+        try:
+            store = getattr(self, "store", None)
+            if store is None or getattr(store, "db", None) is None:
+                return rows
+            for pl in store.smart_playlists():
+                n = len(store.smart_tracks(pl["id"]))
+                rows.append({"name": pl["name"], "id": pl["id"], "count": n})
+        except Exception:
+            log.exception("smart rows failed")
+        return rows
+
+    def request_play_smart(self, key_or_label: str):
+        try:
+            store = getattr(self, "store", None)
+            if store is None:
+                return
+            from gm.smart import BUILTINS
+            label = key_or_label
+            for k, b in BUILTINS.items():
+                if k == key_or_label or b["label"] == key_or_label:
+                    label = b["label"]
+                    break
+            for pl in store.smart_playlists():
+                if pl["name"] == label:
+                    tracks = [t["path"] for t in store.smart_tracks(pl["id"])
+                              if os.path.exists(t["path"])]
+                    if tracks:
+                        self._play_from_list(tracks, 0, self.current_view)
+                    else:
+                        self._show_toast("No matching tracks yet")
+                    return
+        except Exception:
+            log.exception("play smart failed")
+
+    # ---------------- M3U import/export ----------------------------------
+    def request_m3u_import(self):
+        try:
+            from PyQt6.QtWidgets import QFileDialog
+            files, _f = QFileDialog.getOpenFileNames(
+                self, "Import playlists (M3U/M3U8)", "",
+                "Playlists (*.m3u *.m3u8 *.M3U *.M3U8)")
+            for f in files or []:
+                self._import_m3u_file(f)
+        except Exception:
+            log.exception("m3u import failed")
+
+    def _import_m3u_file(self, file_path):
+        try:
+            from gm.m3u import parse_m3u
+            name, entries = parse_m3u(file_path)
+            if not name:
+                name = os.path.splitext(os.path.basename(file_path))[0]
+            resolved = []
+            base = os.path.dirname(os.path.abspath(file_path))
+            for e in entries:
+                p = e if os.path.isabs(e) else os.path.normpath(
+                    os.path.join(base, e))
+                if os.path.exists(p):
+                    resolved.append(p)
+            if not resolved:
+                self._show_toast("No playable files found in playlist")
+                return
+            self.playlists[name] = resolved
+            # also register unknown files into the library
+            new = [p for p in resolved if p not in self.library]
+            if new:
+                self.library.extend(new)
+            self._save_config()
+            self._rebuild_library_list()
+            self._show_toast(f"Imported '{name}' ({len(resolved)} tracks)")
+        except Exception:
+            log.exception("m3u import file failed")
+
+    def _export_all_playlists_m3u(self):
+        self.request_m3u_export()
+
+    def request_m3u_export(self):
+        try:
+            from PyQt6.QtWidgets import QFileDialog
+            import sys as _sys
+            d = QFileDialog.getExistingDirectory(self, "Export playlists to…")
+            if not d:
+                return
+            from gm.m3u import export_m3u
+            count = 0
+            _bad = set('\\/:*?"<>|')
+            for name, paths in self.playlists.items():
+                safe = "".join(c for c in name if c not in _bad).strip()
+                if not safe:
+                    continue
+                out = os.path.join(d, safe + ".m3u8")
+                export_m3u(name, paths, out,
+                           relative=bool(self.prefs.get("m3u_relative_paths",
+                                                        True)))
+                count += 1
+            self._show_toast(f"Exported {count} playlist(s) to {d}")
+        except Exception:
+            log.exception("m3u export failed")
+
+    # ---------------- radio page ----------------------------------------
+    def _build_radio_page(self):
+        from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QLabel,
+                                     QListWidget, QListWidgetItem,
+                                     QHBoxLayout, QPushButton, QAbstractItemView)
+        page = QWidget()
+        page.setObjectName("RadioPage")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(18, 14, 18, 14)
+        layout.setSpacing(10)
+        top = QHBoxLayout()
+        self.radio_title = QLabel("Radio")
+        self.radio_title.setObjectName("PageTitle")
+        top.addWidget(self.radio_title, 1)
+        self.radio_add_btn = QPushButton("Add Station")
+        self.radio_add_btn.setObjectName("GoldBtn")
+        self.radio_add_btn.clicked.connect(self._add_radio_station)
+        top.addWidget(self.radio_add_btn)
+        layout.addLayout(top)
+        self.radio_list = QListWidget()
+        self.radio_list.setObjectName("TrackList")
+        self.radio_list.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection)
+        self.radio_list.itemDoubleClicked.connect(
+            lambda item: self._play_radio_station(item.data(Qt.ItemDataRole.UserRole)))
+        layout.addWidget(self.radio_list, 1)
+        hint = QLabel("Stream URLs (http(s)://…, incl. M3U/HLS). "
+                      "Double-click to play.")
+        hint.setStyleSheet(f"color: {self.theme.get('muted', '#888')};")
+        layout.addWidget(hint)
+        return page
+
+    def _refresh_radio_page(self):
+        try:
+            self.radio_list.clear()
+            stations = []
+            if getattr(self, "store", None) is not None:
+                stations = self.store.db.radio_stations()
+            for st in stations:
+                host = st["url"].split("//")[-1].split("/")[0]
+                item = QListWidgetItem(f"{st['name']}   ·   {host}")
+                item.setData(Qt.ItemDataRole.UserRole, st)
+                self.radio_list.addItem(item)
+            if not stations:
+                from PyQt6.QtWidgets import QListWidgetItem as _I
+                it = _I("No stations yet — add one to start listening.")
+                it.setFlags(Qt.ItemFlag.NoItemFlags)
+                self.radio_list.addItem(it)
+        except Exception:
+            log.exception("radio refresh failed")
+
+    def radio_rows(self):
+        rows = []
+        try:
+            if getattr(self, "store", None) is not None:
+                for st in self.store.db.radio_stations():
+                    rows.append({"id": st["id"], "name": st["name"],
+                                 "url": st["url"]})
+        except Exception:
+            pass
+        return rows
+
+    def _add_radio_station(self):
+        try:
+            from PyQt6.QtWidgets import QInputDialog
+            name, ok = QInputDialog.getText(self, "Add station", "Station name:")
+            if not ok or not name.strip():
+                return
+            url, ok2 = QInputDialog.getText(self, "Add station", "Stream URL:")
+            if not ok2 or not url.strip():
+                return
+            url = url.strip()
+            if not url.startswith(("http://", "https://")):
+                self._show_toast("Only http(s) stream URLs are allowed")
+                return
+            if getattr(self, "store", None) is not None:
+                self.store.db.add_radio(name.strip(), url)
+                self._refresh_radio_page()
+                self._show_toast(f"Added '{name.strip()}'")
+        except Exception:
+            log.exception("add radio failed")
+
+    def _play_radio_station(self, station):
+        try:
+            if not station:
+                return
+            self._play_url_stream(station["name"], station["url"])
+        except Exception:
+            log.exception("radio play failed")
+
+    def request_play_radio(self, station_id):
+        try:
+            for st in self.radio_rows():
+                if st["id"] == station_id:
+                    self._play_url_stream(st["name"], st["url"])
+                    return
+        except Exception:
+            log.exception("request radio failed")
+
+    def request_remove_radio(self, station_id):
+        try:
+            if getattr(self, "store", None) is not None:
+                self.store.db.remove_radio(station_id)
+                self._refresh_radio_page()
+        except Exception:
+            log.exception("remove radio failed")
+
+    def request_add_radio(self):
+        self._add_radio_station()
+
+    def _play_url_stream(self, name: str, url: str):
+        """Play an internet stream (radio). Marks now-playing accordingly."""
+        try:
+            self.current_track = url
+            self.current_index = -1
+            self.current_playlist = []
+            self._is_stream = True
+            self.now_title.setText(name)
+            self.now_artist.setText(url.split("//")[-1].split("/")[0])
+            self.player_bar.title_label.setMarqueeText(name)
+            self.player_bar.artist_label.setMarqueeText("Internet radio")
+            self.player_bar.update_like_button(False)
+            self.player_bar.update_play_button(1)
+            self.audio.load_and_play(url)
+            if hasattr(self, "_load_cover_async"):
+                try:
+                    self.cover_label.set_cover(None)
+                    self.player_bar.set_cover_thumb(None)
+                except Exception:
+                    pass
+            self._show_toast(f"Streaming {name}")
+        except Exception:
+            log.exception("stream play failed")
+
+    # ---------------- folder watching ------------------------------------
+    def _apply_folder_watch(self):
+        try:
+            enabled = bool(self.prefs.get("folder_watch", True))
+            if enabled:
+                self._start_folder_watcher()
+            else:
+                self._stop_folder_watcher()
+        except Exception:
+            log.exception("folder watch apply failed")
+
+    def _start_folder_watcher(self):
+        try:
+            from PyQt6.QtCore import QFileSystemWatcher
+            if getattr(self, "_folder_watcher", None) is None:
+                self._folder_watcher = QFileSystemWatcher(self)
+                self._folder_watcher.directoryChanged.connect(
+                    self._on_folder_changed)
+                self._folder_watcher.fileChanged.connect(
+                    self._on_watched_file_changed)
+            # watch added folders (non-recursive: each registered folder +
+            # its direct subfolders are watched; deep trees rely on rescan)
+            roots = list(self.added_folders or [])
+            want = set()
+            for root in roots:
+                try:
+                    if os.path.isdir(root):
+                        want.add(root)
+                        for sub in self._list_subdirs(root)[:60]:
+                            want.add(sub)
+                except OSError:
+                    continue
+            current = set(self._folder_watcher.directories())
+            add = list(want - current)
+            rem = list(current - want)
+            if add:
+                self._folder_watcher.addPaths(add)
+            if rem:
+                self._folder_watcher.removePaths(rem)
+        except Exception:
+            log.exception("folder watcher start failed")
+
+    def _stop_folder_watcher(self):
+        try:
+            w = getattr(self, "_folder_watcher", None)
+            if w is not None:
+                dirs = list(w.directories())
+                if dirs:
+                    w.removePaths(dirs)
+        except Exception:
+            pass
+
+    def _on_watched_file_changed(self, path: str):
+        # single file changed: refresh tags for it soon (debounced)
+        self._schedule_watch_debounce()
+
+    def _on_folder_changed(self, folder: str):
+        self._schedule_watch_debounce()
+
+    def _schedule_watch_debounce(self):
+        try:
+            from PyQt6.QtCore import QTimer
+            ms = int(self.prefs.get("folder_watch_debounce_ms", 2000))
+            if getattr(self, "_watch_debounce", None) is None:
+                self._watch_debounce = QTimer(self)
+                self._watch_debounce.setSingleShot(True)
+                self._watch_debounce.timeout.connect(self._on_watch_debounced)
+            self._watch_debounce.start(max(250, ms))
+        except Exception:
+            pass
+
+    def _on_watch_debounced(self):
+        """After quiet period: incremental scan of changed folders only."""
+        try:
+            if not self.added_folders:
+                return
+            self._on_refresh()
+        except Exception:
+            log.exception("watch rescan failed")
+
+    # ---------------- favorites collections ------------------------------
+    def favorite_collections(self):
+        try:
+            if getattr(self, "store", None) is not None:
+                return self.store.db.favorite_categories()
+        except Exception:
+            pass
+        return []
+
+
+    # ---------------- Up Next queue panel (v3) ---------------------------
+    def _toggle_queue_panel(self):
+        try:
+            if getattr(self, "_queue_panel_w", None) is None:
+                from queue_panel import QueuePanel
+                self._queue_panel_w = QueuePanel(self, self)
+                self.main_layout.insertWidget(
+                    self.main_layout.indexOf(self.stack) + 1,
+                    self._queue_panel_w)
+            self._queue_panel_w.toggle()
+            if self._queue_panel_w.isVisible():
+                self._queue_panel_w.refresh()
+        except Exception:
+            log.exception("queue panel toggle failed")
+
+    def _insert_next(self, paths):
+        """'Play Next': insert paths right after the current index."""
+        if not paths:
+            return
+        try:
+            paths = [p for p in paths if isinstance(p, str)]
+            if not self.current_playlist:
+                self.current_playlist = list(paths)
+                self.current_index = 0
+                self._load_and_play_current()
+                return
+            at = self.current_index + 1 if self.current_index >= 0 else 0
+            self.current_playlist[at:at] = paths
+            if getattr(self, "_queue_panel_w", None) is not None and \
+                    self._queue_panel_w.isVisible():
+                self._queue_panel_w.refresh()
+            self._show_toast(f"Playing next: {len(paths)} track(s)")
+        except Exception:
+            log.exception("insert next failed")
+
+    def _append_queue(self, paths):
+        if not paths:
+            return
+        try:
+            self.current_playlist.extend(p for p in paths
+                                         if isinstance(p, str))
+            if getattr(self, "_queue_panel_w", None) is not None and \
+                    self._queue_panel_w.isVisible():
+                self._queue_panel_w.refresh()
+        except Exception:
+            log.exception("append queue failed")
+
+    # ---------------- sleep timer dialog ---------------------------------
+    def _show_sleep_dialog(self):
+        try:
+            from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
+                                         QPushButton, QLabel, QSpinBox)
+            from PyQt6.QtCore import Qt as _Qt
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Sleep Timer")
+            lay = QVBoxLayout(dlg)
+            lay.setContentsMargins(18, 14, 18, 14)
+            info = QLabel("Stop playback after this many minutes:")
+            lay.addWidget(info)
+            row = QHBoxLayout()
+            sb = QSpinBox()
+            sb.setRange(1, 480)
+            sb.setValue(int(self.sleep_timer_minutes or 30))
+            row.addWidget(sb)
+            lay.addLayout(row)
+            btns = QHBoxLayout()
+            ok = QPushButton("Start")
+            ok.setObjectName("GoldBtn")
+            ok.clicked.connect(lambda: (self.start_sleep_timer(sb.value()),
+                                        dlg.accept()))
+            btns.addWidget(ok)
+            stop = QPushButton("Stop timer")
+            stop.clicked.connect(lambda: (self._stop_sleep_timer(), dlg.accept()))
+            btns.addWidget(stop)
+            cancel = QPushButton("Cancel")
+            cancel.clicked.connect(dlg.reject)
+            btns.addWidget(cancel)
+            lay.addLayout(btns)
+            dlg.exec()
+        except Exception:
+            log.exception("sleep dialog failed")
+
+    def _stop_sleep_timer(self):
+        try:
+            if getattr(self, "_sleep_timer", None) is not None:
+                self._sleep_timer.stop()
+            self.sleep_timer_active = False
+            self._save_config()
+            self._show_toast("Sleep timer off")
+        except Exception:
+            pass
+
+    # ---------------- duplicates + backup helpers ------------------------
+    def _open_duplicates_dialog(self):
+        try:
+            from duplicates import group_duplicates
+            from duplicates_dialog import DuplicatesDialog
+            groups = group_duplicates(list(self.library),
+                                      self._tag_cache.get)
+            if not groups:
+                self._show_toast("No duplicates found")
+                return
+            dlg = DuplicatesDialog(self, groups, self)
+            dlg.exec()
+            self._rebuild_library_list()
+            self._save_config()
+        except Exception:
+            log.exception("duplicates dialog failed")
+
+    def _open_backup_restore(self):
+        try:
+            from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
+                                         QPushButton, QLabel, QMessageBox)
+            import userbackup
+            data_dir = config_path().parent
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Backup / Restore")
+            dlg.resize(420, 160)
+            lay = QVBoxLayout(dlg)
+            lay.setContentsMargins(18, 14, 18, 14)
+            info = QLabel("Backups live in:\n" + str(data_dir / "backups"))
+            info.setWordWrap(True)
+            lay.addWidget(info)
+            row = QHBoxLayout()
+            b1 = QPushButton("Back up now")
+            b1.setObjectName("GoldBtn")
+            def _do_backup():
+                userbackup.create_startup_backup(data_dir)
+                self._show_toast("Backup created")
+                dlg.accept()
+            b1.clicked.connect(_do_backup)
+            row.addWidget(b1)
+            b2 = QPushButton("Restore missing data files")
+            b2.clicked.connect(lambda: (
+                userbackup.restore_missing(data_dir),
+                self._show_toast("Restore attempted"), dlg.accept()))
+            row.addWidget(b2)
+            close = QPushButton("Close")
+            close.clicked.connect(dlg.reject)
+            row.addWidget(close)
+            lay.addLayout(row)
+            dlg.exec()
+        except Exception:
+            log.exception("backup dialog failed")
+
+    # ---------------- audio/remote/floating pref appliers ----------------
+    def _apply_audio_prefs(self):
+        """Apply engine/EQ/crossfade/normalization prefs (safe no-ops before
+        the v3 audio layer is constructed)."""
+        try:
+            adapter = getattr(self, "audio_v3", None)
+            if adapter is None:
+                return
+            adapter.apply_prefs(self.prefs)
+        except Exception:
+            log.exception("audio prefs apply failed")
+
+    def _apply_remote_prefs(self):
+        """Start/stop the web remote + telegram bot per prefs."""
+        try:
+            from gm.remote_bridges import sync_remotes
+            sync_remotes(self)
+        except Exception:
+            log.exception("remote prefs apply failed")
+
+    def _apply_floating_lyrics(self):
+        try:
+            want = bool(self.prefs.get("floating_lyrics", False))
+            fw = getattr(self, "_floating_lyrics_w", None)
+            if want and fw is None:
+                from gm.ui.lyrics_ui import FloatingLyricsWidget
+                self._floating_lyrics_w = FloatingLyricsWidget()
+                self._floating_lyrics_w.set_theme(self.theme)
+                self._floating_lyrics_w.seek_requested.connect(
+                    lambda ms: self.audio.set_position(int(ms)))
+                self._floating_lyrics_w.show()
+            elif not want and fw is not None:
+                fw.close()
+                fw.deleteLater()
+                self._floating_lyrics_w = None
+            elif want and fw is not None:
+                fw.set_theme(self.theme)
+        except Exception:
+            log.exception("floating lyrics apply failed")
+
     def _store_remove(self, paths):
         """Explicit removal from the SQLite store (v3.0). Called by every
         UI action that removes tracks/folders; _save_config's reconcile is
@@ -3825,6 +4869,7 @@ class MainWindow(QMainWindow):
         cfg = {
             "version": APP_VERSION,
             "theme": self.theme_name,
+            "prefs": self.prefs,
             "library": lib,
             "favorites": favs,
             "added_folders": folders,
@@ -4073,6 +5118,7 @@ class MainWindow(QMainWindow):
         if self.theme_name not in Theme.names():
             self.theme_name = Theme.DEFAULT_NAME
         self.theme = Theme.get(self.theme_name)
+        self._load_prefs(cfg)
         # v3.0: library data prefers the SQLite store; the JSON keys are
         # the fallback (legacy mode when the migration could not verify).
         if getattr(self, "store", None) is not None and \

@@ -174,6 +174,7 @@ class Sidebar(QFrame):
         self._buttons[key] = btn
         self._icons[key] = icon
         self._labels[key] = label
+        btn.svg_string = icon  # v2 SideRail compatibility (tests read this)
         row_layout.addWidget(btn, 1)
 
         if badge_key:
@@ -301,6 +302,35 @@ class Sidebar(QFrame):
         self._refresh_icons()
 
     # ------------------------------------------------------------ navigation --
+    # ------------------------------------------------------------ compat --
+    # v2 SideRail attribute surface (mini_player / scripts / tests)
+    @property
+    def btn_library(self): return self._buttons.get("library")
+    @property
+    def btn_favorites(self): return self._buttons.get("favorites")
+    @property
+    def btn_albums(self): return self._buttons.get("albums")
+    @property
+    def btn_artists(self): return self._buttons.get("artists")
+    @property
+    def btn_genres(self): return self._buttons.get("genres")
+    @property
+    def btn_playlists(self): return self._buttons.get("playlists")
+    @property
+    def btn_radio(self): return self._buttons.get("radio")
+    @property
+    def btn_stats(self): return self._buttons.get("stats")
+    @property
+    def btn_add(self): return self._buttons.get("addfolder")
+    @property
+    def btn_refresh(self): return self._buttons.get("refresh")
+    @property
+    def btn_theme(self): return self._buttons.get("theme")
+    @property
+    def btn_settings(self): return self._buttons.get("settings")
+    @property
+    def btn_mini(self): return self._buttons.get("mini")
+
     def set_active(self, key: str) -> None:
         """Check the nav button for *key* exclusively (unknown -> none)."""
         # Qt refuses to uncheck the checked button of an exclusive group
