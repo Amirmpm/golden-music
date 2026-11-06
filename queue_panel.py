@@ -8,8 +8,8 @@ or jump to any entry.
 """
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-    QPushButton, QFrame
+    QAbstractItemView, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QListWidget, QListWidgetItem, QPushButton, QFrame
 )
 
 from config import APP_NAME
@@ -45,9 +45,20 @@ class QueuePanel(QFrame):
         self.list_widget = QListWidget()
         self.list_widget.setObjectName("TrackList")
         self.list_widget.itemDoubleClicked.connect(self._jump_to_item)
+        # v3: drag-and-drop reordering + multi-select
+        self.list_widget.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.list_widget.setDragEnabled(True)
+        self.list_widget.setAcceptDrops(True)
+        self.list_widget.setDropIndicatorShown(True)
+        self.list_widget.setDragDropMode(
+            QAbstractItemView.DragDropMode.InternalMove)
+        self.list_widget.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.list_widget.model().rowsMoved.connect(self._on_rows_moved)
         layout.addWidget(self.list_widget, 1)
 
-        hint = QLabel("Double-click to jump · right-click for options")
+        hint = QLabel("Drag to reorder · double-click to jump · "
+                      "right-click for options")
         hint.setStyleSheet(f"color: {self.main_window.theme['muted']}; font-size: 11px;")
         layout.addWidget(hint)
         self.list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -120,14 +131,59 @@ class QueuePanel(QFrame):
         mw._load_and_play_current()
         self.refresh()
 
+    def _selected_paths(self):
+        out = []
+        for item in self.list_widget.selectedItems():
+            data = item.data(Qt.ItemDataRole.UserRole)
+            if data is not None:
+                out.append((data, item))
+        return out
+
+    def _on_rows_moved(self, parent, start, end, dest, dest_row):
+        """User dragged rows: the visible list is the UPCOMING slice, so
+        apply its new order onto mw.current_playlist[cur+1:]. Item paths
+        are recovered from the row tooltips (UserRole holds stale indices
+        after the move)."""
+        try:
+            mw = self.main_window
+            pl = list(mw.current_playlist or [])
+            cur = int(mw.current_index or -1)
+            if cur + 1 >= len(pl):
+                return
+            upcoming = []
+            for i in range(self.list_widget.count()):
+                it = self.list_widget.item(i)
+                if it is None:
+                    continue
+                tip = it.toolTip()
+                if tip and (it.flags() & Qt.ItemFlag.ItemIsSelectable):
+                    upcoming.append(tip)
+            if len(upcoming) != len(pl) - (cur + 1):
+                return          # structural mismatch — bail out safely
+            mw.current_playlist = pl[:cur + 1] + upcoming
+            self.refresh()
+        except Exception:
+            pass
+
     def _context_menu(self, pos):
         from PyQt6.QtWidgets import QMenu
         item = self.list_widget.itemAt(pos)
         if item is None or item.data(Qt.ItemDataRole.UserRole) is None:
             return
+        sel = self._selected_paths()
+        multi = [d for d, _it in sel if d not in (None, '__current__')]
         menu = QMenu(self)
         act_jump = menu.addAction("Play now")
         act_remove = menu.addAction("Remove from queue")
+        act_play_next = None
+        act_to_playlist = None
+        if multi:
+            menu.addSeparator()
+            act_play_next = menu.addAction(
+                f"Play next ({len(multi)})" if len(multi) > 1 else "Play next")
+            act_to_playlist = menu.addAction(
+                f"Send {len(multi)} to playlist..." if len(multi) > 1
+                else "Send to playlist...")
         chosen = menu.exec(self.list_widget.mapToGlobal(pos))
         if chosen == act_jump:
             self._jump_to_item(item)
@@ -138,6 +194,16 @@ class QueuePanel(QFrame):
                 if pos_idx < self.main_window.current_index:
                     self.main_window.current_index -= 1
             self.refresh()
+        elif chosen == act_play_next and multi:
+            self.main_window._insert_next(multi)
+            self.refresh()
+        elif chosen == act_to_playlist and multi:
+            try:
+                from playlist_dialog import add_track_to_playlist_dialog
+                for pth in multi:
+                    add_track_to_playlist_dialog(self.main_window, pth)
+            except Exception:
+                pass
 
 
 def insert_play_next(main_window, path: str):

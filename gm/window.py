@@ -2353,6 +2353,39 @@ class MainWindow(QMainWindow):
         act_props.setIcon(QIcon(render_icon(Icon.SETTINGS, 16, t["muted"], dpr)))
         act_props.triggered.connect(lambda: self._show_track_properties(path))
         menu.addAction(act_props)
+        # ---- v3 additions: Play Next / queue / rating ------------------
+        menu.addSeparator()
+        act_next = QAction("Play Next", self)
+        act_next.setIcon(QIcon(render_icon(Icon.NEXT, 16, t["gold"], dpr)))
+        act_next.triggered.connect(lambda: self._insert_next([path]))
+        menu.addAction(act_next)
+        act_queue = QAction("Add to Queue", self)
+        act_queue.setIcon(QIcon(render_icon(Icon.QUEUE, 16, t["gold"], dpr)))
+        act_queue.triggered.connect(lambda: self._append_queue([path]))
+        menu.addAction(act_queue)
+        menu.addSeparator()
+        rate_menu = QMenu("Rate", self)
+        rate_menu.setIcon(QIcon(render_icon(Icon.STAR, 16, t["gold"], dpr)))
+        current_rating = 0
+        try:
+            if getattr(self, "store", None) is not None:
+                tr = self.store.db.get_track(path)
+                current_rating = (tr or {}).get("rating", 0) or 0
+        except Exception:
+            current_rating = 0
+        for stars in range(1, 6):
+            ra = QAction("★" * stars, self)
+            ra.setIcon(QIcon(render_icon(
+                Icon.STAR_FILLED if stars <= current_rating else Icon.STAR,
+                15, t["gold"], dpr)))
+            ra.triggered.connect(lambda _c=False, st=stars:
+                                 self._set_track_rating(path, st))
+            rate_menu.addAction(ra)
+        if current_rating:
+            clear_ra = QAction("Clear rating", self)
+            clear_ra.triggered.connect(lambda: self._set_track_rating(path, 0))
+            rate_menu.addAction(clear_ra)
+        menu.addMenu(rate_menu)
         # Use cached tags for display if available
         if path in self._tag_cache:
             title, artist = self._tag_cache[path]
@@ -2580,7 +2613,33 @@ class MainWindow(QMainWindow):
     # Lyrics panel (local .lrc / embedded / online via lrclib.net)
     # ------------------------------------------------------------------
     def _toggle_lyrics_panel(self):
+        """v3 lyrics panel: bilingual view, quality detection, editor,
+        remembered per-track offset, confirmation-gated online replacement."""
         try:
+            prefer_v3 = True
+            try:
+                from gm.lyrics_flow import LyricsPanel3   # noqa: F401
+            except Exception:
+                prefer_v3 = False
+            if prefer_v3:
+                if getattr(self, "_lyrics_panel3", None) is None:
+                    from gm.lyrics_flow import LyricsPanel3
+                    self._lyrics_panel3 = LyricsPanel3(self)
+                    self._lyrics_panel3.seek_requested.connect(
+                        lambda ms: self.audio.set_position(int(ms)))
+                panel = self._lyrics_panel3
+                panel.set_theme(self.theme)
+                if panel.isVisible():
+                    panel.hide()
+                    return
+                panel.load_for_track(
+                    self.current_track,
+                    allow_online=bool(self.prefs.get("lyrics_online", True)))
+                gp = self.mapToGlobal(self.rect().bottomLeft())
+                panel.move(gp.x() + 80, max(80, gp.y() - 460))
+                panel.show()
+                panel.raise_()
+                return
             from lyrics_panel import LyricsPanel
             if getattr(self, "_lyrics_panel", None) is None:
                 self._lyrics_panel = LyricsPanel(self)
@@ -2604,6 +2663,15 @@ class MainWindow(QMainWindow):
         panel = getattr(self, "_lyrics_panel", None)
         if panel is not None and panel.isVisible() and self.current_track:
             panel.sync_position(pos_ms)
+        p3 = getattr(self, "_lyrics_panel3", None)
+        if p3 is not None and p3.isVisible() and self.current_track:
+            p3.sync_position(pos_ms)
+        fw = getattr(self, "_floating_lyrics_w", None)
+        if fw is not None and fw.isVisible() and self.current_track:
+            try:
+                fw.sync_position(pos_ms)
+            except Exception:
+                pass
         fs = getattr(self, "_fullscreen_player", None)
         if fs is not None and fs.isVisible() and self.current_track:
             try:
@@ -5012,8 +5080,48 @@ class MainWindow(QMainWindow):
                 self._maybe_resume_bookmark(path)
             except Exception:
                 pass
+            # --- floating lyrics / mini lyrics bar feed ---
+            try:
+                self._feed_lyrics_widgets(path)
+            except Exception:
+                pass
         except Exception:
             log.exception("track analytics failed")
+
+    def _feed_lyrics_widgets(self, path):
+        """Background-load lyrics for the floating widget + panel refresh."""
+        if not path or str(path).startswith(("http://", "https://")):
+            return
+        fw = getattr(self, "_floating_lyrics_w", None)
+        p3 = getattr(self, "_lyrics_panel3", None)
+        if fw is None and (p3 is None or not p3.isVisible()):
+            return
+        title, artist = self._tag_cache.get(
+            path, (os.path.splitext(os.path.basename(path))[0], ""))
+        from gm.lyrics_flow import LyricsSearchWorker
+        if getattr(self, "_lyrics_feed_worker", None) is not None and \
+                self._lyrics_feed_worker.isRunning():
+            self._lyrics_feed_worker.wait(400)
+        self._lyrics_feed_worker = LyricsSearchWorker(
+            path, title, artist, 0,
+            online=bool(self.prefs.get("lyrics_online", True)), parent=self)
+        self._lyrics_feed_worker.ready.connect(self._on_lyrics_feed)
+        self._lyrics_feed_worker.start()
+
+    def _on_lyrics_feed(self, path, ly, _cands):
+        if path != self.current_track or ly is None or ly.is_empty():
+            return
+        try:
+            offset = 0
+            if getattr(self, "store", None) is not None:
+                offset = self.store.db.lyrics_offset(path)
+            from gm.lyrics_io import apply_offset
+            lines = apply_offset(list(ly.lines), offset)
+            fw = getattr(self, "_floating_lyrics_w", None)
+            if fw is not None and fw.isVisible():
+                fw.set_lines(lines)
+        except Exception:
+            pass
 
     def _start_waveform_for(self, path):
         if not self.prefs.get("waveform_seekbar", True):
