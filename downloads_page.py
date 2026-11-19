@@ -300,6 +300,10 @@ class DownloadsPage(QWidget):
             self.queue_title.setText(
                 f"Active — {len(jobs)} download"
                 + ("s" if len(jobs) != 1 else ""))
+        # Trailing stretch: the scroll host is widgetResizable, so without it
+        # a single job row stretches to fill the whole queue viewport (a
+        # lone download rendered as a huge mostly-empty card).
+        self.queue_lay.addStretch(1)
 
     def _note_completed(self, path: str):
         records = self.manager.history() if self.manager else []

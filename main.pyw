@@ -2922,6 +2922,17 @@ class MainWindow(QMainWindow):
             self._fav_delegate.set_theme(self.theme)
         if hasattr(self, "player_bar"):
             self.player_bar.set_theme(self.theme)
+        # v3 pages carry their own inline styles (titles, pills, rows, cards)
+        # baked at construction time — re-theme them explicitly on every
+        # apply so a live Light/Dark switch restyles Home/Search/Downloads
+        # instead of leaving washed-out dark-on-light headings behind.
+        for page_attr in ("home_page", "search_page", "downloads_page"):
+            page = getattr(self, page_attr, None)
+            if page is not None:
+                try:
+                    page.set_theme(self.theme)
+                except Exception as e:
+                    log.debug(f"page re-theme failed ({page_attr}): {e}")
         # Tray popup follows the theme too (dividers, accent buttons,
         # header, glass background) — previously it kept its boot colors.
         tmw = getattr(self, "tray_menu_widget", None)
@@ -6257,6 +6268,12 @@ class MainWindow(QMainWindow):
         self._rebuild_library_list()
         self._rebuild_favorites_list()
         self._update_count_label()
+        # v3 boot fix: _init_v3_systems() ran during __init__ while the
+        # library was still empty (config loads asynchronously AFTER that),
+        # so Home kept the empty "Add music folder" CTA on every real boot
+        # with a populated library. Rebuild the Home model now that the
+        # library + tag cache are actually loaded.
+        self._refresh_home()
 
         # Restore last track (if any)
         last = cfg.get("last_track")

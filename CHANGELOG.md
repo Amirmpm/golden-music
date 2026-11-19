@@ -74,6 +74,28 @@
   rename) via a testenv import shim; v3 regression suite added;
   pip-audit + SBOM steps added.
 
+**Fixed (found while producing the v3 screen recording; all suites re-run green)**
+- Home showed the empty "Add music folder" state on every real boot with a
+  populated library: `_init_v3_systems()` refreshed Home during `__init__`
+  while the library was still empty, and the async config load never
+  re-refreshed it. Home now rebuilds as soon as the library + tag cache
+  are loaded.
+- Downloads: the worker never tracked its in-flight job (`_current` was
+  read by pause/cancel/jobs but never assigned), so pausing or cancelling
+  a RUNNING download was a silent no-op; jobs() now also de-duplicates
+  the running job against the queue (the Downloads page used to render
+  one job as two rows).
+- Downloads page: a lone active download stretched to fill the whole
+  queue viewport (missing trailing stretch in the resizable scroll host).
+- Settings: the Liquid Glass mode combo, sliders, density/background combos
+  and checkboxes were not wired to live apply (only the accent swatches
+  and reset were) — contradicting the documented behaviour and the _on_ok
+  comment. All controls now apply live, and the dialog re-renders its own
+  chrome when a live Light/Dark switch happens while it is open.
+- Live Light/Dark switching now re-themes the v3 pages (Home cards, Search
+  pill, Downloads page) instead of leaving dark-baked headings washed out
+  on the light background.
+
 ### Compatibility
 - Config/library/playlists/favorites/history/stats preserved; the
   theme key migrates automatically (and stays for rollback).

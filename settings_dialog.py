@@ -57,6 +57,20 @@ class SettingsDialog(QDialog):
 
         self._apply_styles()
         self._load_current_settings()
+        # Live-apply wiring — installed AFTER _load_current_settings so the
+        # initial sync doesn't fire redundant theme applies at dialog open.
+        # (The accent swatches / reset button already applied live; the mode
+        # combo, sliders, density and background combos now do too, as
+        # documented in NUVX_SETTINGS_PARITY and the _on_ok comment.)
+        self.lg_mode_combo.currentIndexChanged.connect(self._lg_live_apply)
+        self.lg_transparency.valueChanged.connect(self._lg_live_apply)
+        self.lg_blur.valueChanged.connect(self._lg_live_apply)
+        self.lg_corner.valueChanged.connect(self._lg_live_apply)
+        self.lg_anim.valueChanged.connect(self._lg_live_apply)
+        self.lg_density.currentIndexChanged.connect(self._lg_live_apply)
+        self.lg_background.currentIndexChanged.connect(self._lg_live_apply)
+        self.lg_art_cb.toggled.connect(self._lg_live_apply)
+        self.lg_reduced_cb.toggled.connect(self._lg_live_apply)
 
     def _apply_styles(self):
         t = self.theme
@@ -236,6 +250,16 @@ class SettingsDialog(QDialog):
         self._sync_glass_from_controls()
         mw = self.main_window
         mw._apply_theme()
+        # The dialog was constructed under the previous mode — re-render its
+        # own chrome with the freshly applied theme so the dialog follows a
+        # live Light/Dark switch (previously it kept dark-baked inline styles
+        # over the light app).
+        if self.theme is not mw.theme:
+            self.theme = mw.theme
+            try:
+                self._apply_styles()
+            except Exception:
+                pass
         mw._save_config_debounced()
 
     def _sync_glass_from_controls(self):

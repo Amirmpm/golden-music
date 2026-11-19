@@ -290,6 +290,11 @@ class DownloadWorker(QThread):
             self._drop(job)
             return True
         job.state = JobState.RUNNING
+        # Track the in-flight job so pause()/cancel() (GUI thread) can reach
+        # it and jobs() keeps the RUNNING row visible — `_current` was read
+        # by those paths but never assigned, so pausing/cancelling a RUNNING
+        # download used to be a silent no-op.
+        self._current = job
         self.job_updated.emit(job)
         try:
             folder = self.folder
@@ -336,6 +341,8 @@ class DownloadWorker(QThread):
             if job.state in (JobState.COMPLETED, JobState.FAILED,
                             JobState.CANCELLED):
                 self._drop(job)
+            if self._current is job:
+                self._current = None
         return job.state != JobState.QUEUED
 
     def _drop(self, job: DownloadJob):
@@ -495,8 +502,15 @@ class DownloadManager(QObject):
         return ok
 
     def jobs(self) -> list:
-        return list(self.worker._queue) + ([self.worker._current]
-                                           if self.worker._current else [])
+        # A RUNNING job stays in the queue until it reaches a terminal
+        # state, so `_current` (now actually tracked) must be de-duplicated
+        # against the queue — otherwise the Downloads page renders the same
+        # job as two rows.
+        q = list(self.worker._queue)
+        cur = self.worker._current
+        if cur is not None and all(j is not cur for j in q):
+            q.append(cur)
+        return q
 
     def record_completed(self, job: DownloadJob):
         rec = job.as_dict()
