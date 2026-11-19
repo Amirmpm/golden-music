@@ -30,13 +30,15 @@ w = m.MainWindow()
 w.show()
 app.processEvents()
 
-# 2. Theme button uses brush (not moon/sun) even after theme changes
-for name in ('royal_gold', 'ivory'):
-    w.theme_name = name
+# 2. v3: the sidebar no longer carries a brush button (Appearance lives in
+# Settings); verify the Liquid Glass mode flips dark/light instead of the
+# legacy theme ids.
+for mode in ('dark', 'light'):
+    w.glass.mode = mode
     w._apply_theme()
-    assert w.rail.btn_theme.svg_string == Icon.BRUSH, \
-        f'theme btn is {w.rail.btn_theme.svg_string} in {name}'
-print('2. theme button = brush in dark & light themes: OK', flush=True)
+    assert w.theme['is_dark'] == (mode == 'dark'), \
+        f'glass mode {mode} did not flip the theme'
+print('2. liquid glass mode flips dark/light correctly: OK', flush=True)
 
 # 3. Picker has DARK/LIGHT section labels
 w._show_theme_picker()

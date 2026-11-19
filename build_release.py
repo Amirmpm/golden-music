@@ -47,7 +47,11 @@ TRIM_FILES = [
     "_internal/PyQt6/Qt6/plugins/imageformats/qtiff.dll",    # TIFF covers: never
     "_internal/PyQt6/Qt6/plugins/imageformats/qwebp.dll",    # WebP covers: never
     "_internal/PyQt6/Qt6/plugins/generic",      # e.g. qtuiotouchplugin
-    "_internal/PyQt6/Qt6/plugins/multimedia/ffmpegmediaplugin.dll",  # WMF used
+    # AUDIT FIX #3 (codec/backend mismatch): ffmpegmediaplugin.dll is KEPT.
+    # Qt's default backend (FFmpeg) plays all 9 advertised formats
+    # (incl. OGG/Vorbis/Opus that WMF cannot decode); forcing WMF while
+    # deleting this plugin made registered formats unplayable.
+    # "_internal/PyQt6/Qt6/plugins/mediaservice/ffmpegmediaplugin.dll",
     "_internal/PyQt6/Qt6/plugins/tls",          # only if unused (kept if QTLS needed)
     # --- Python stdlib dead weight ---
     "_internal/tcl",                             # tkinter excluded in spec
@@ -62,7 +66,7 @@ TRIM_DIRS = [
 
 # Size cap (MB) for the portable folder — the build FAILS loudly above this
 # instead of silently shipping a bloated bundle.
-SIZE_BUDGET_MB = 110
+SIZE_BUDGET_MB = 115
 
 
 def run(cmd, **kw):

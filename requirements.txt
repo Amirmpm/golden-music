@@ -14,3 +14,10 @@ pywin32>=306; sys_platform == "win32"
 # For building the .exe (run on Windows)
 # Bounded below 7.x — major bumps must be reviewed before adopting
 pyinstaller>=6.10.0,<7
+
+# --- v3: Windows media controls (SMTC) — optional, Windows-only wheels.
+# When absent the app degrades gracefully (tray + global media keys).
+winrt-runtime>=4.0; sys_platform == "win32"
+winrt-Windows.Media>=4.0; sys_platform == "win32"
+winrt-Windows.Storage.Streams>=4.0; sys_platform == "win32"
+winrt-Windows.Foundation>=4.0; sys_platform == "win32"

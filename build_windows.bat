@@ -3,7 +3,7 @@ REM ============================================================
 REM  Golden Music Windows Build Script
 REM  Produces:
 REM    dist\GoldenMusic\                        <- PyInstaller app folder
-REM    dist\installer\GoldenMusicSetup-1.1.0.exe <- Inno Setup installer
+REM    dist\installer\GoldenMusicSetup-3.0.0.exe <- Inno Setup installer
 REM
 REM  REQUIREMENTS:
 REM    - Python 3.11+ (3.14 recommended) with requirements.txt installed
@@ -13,7 +13,7 @@ REM ============================================================
 setlocal
 cd /d %~dp0
 
-set "ISCC_EXE=D:\Apps\Inno Setup 6\iscc.exe"
+set "ISCC_EXE=%ProgramFiles(x86)%\Inno Setup 6\iscc.exe"
 if not exist "%ISCC_EXE%" set "ISCC_EXE=C:\Program Files (x86)\Inno Setup 6\iscc.exe"
 
 echo.
@@ -66,6 +66,6 @@ echo.
 echo === Build complete! ===
 echo.
 echo App folder:    dist\GoldenMusic\GoldenMusic.exe
-echo Installer:     dist\installer\GoldenMusicSetup-1.1.0.exe
+echo Installer:     dist\installer\GoldenMusicSetup-3.0.0.exe
 echo.
 pause

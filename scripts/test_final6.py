@@ -46,8 +46,8 @@ print('3. albums single selection: OK', flush=True)
 # 4. Playback speed dialog positions near more_btn (code-level check)
 import inspect
 src = inspect.getsource(m.MainWindow._cycle_playback_rate)
-assert 'more_btn.mapToGlobal' in src, 'speed dialog still anchored to rate_btn'
-print('4. playback speed anchored to more btn: OK', flush=True)
+assert 'anchor_btn.mapToGlobal' in src, 'speed dialog lost its asking-button anchoring'
+print('4. playback speed anchored to the asking button: OK', flush=True)
 
 # 5. Settings dialog QSS readable in all themes
 from config import Theme

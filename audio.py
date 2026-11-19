@@ -41,6 +41,7 @@ class AudioBackend(QObject):
         self._available = HAVE_QT_AUDIO
         self._error = None
         self._current_path = None
+        self._current_url = None
 
         if HAVE_QT_AUDIO:
             try:
@@ -86,6 +87,7 @@ class AudioBackend(QObject):
             return
 
         self._current_path = filepath
+        self._current_url = None
         self._error = None
         try:
             # Stop current playback
@@ -100,6 +102,40 @@ class AudioBackend(QObject):
             self.error_occurred.emit(self._error)
             log.error(f"load_and_play error: {e}")
 
+
+    # ------------------------------------------------------------------
+    # Online streaming (v3) — ONE playback engine for local + online
+    # ------------------------------------------------------------------
+    def play_url(self, url: str):
+        """Stream an HTTPS URL (online provider). QMediaPlayer buffers
+        internally; the same engine serves local files and streams."""
+        if not self._available:
+            self._error = "Audio backend not available"
+            self.error_occurred.emit(self._error)
+            return False
+        if not (url.startswith("https://")
+                or url.startswith("http://127.0.0.1")
+                or url.startswith("http://localhost")):
+            self._error = "Refusing non-HTTPS stream URL"
+            self.error_occurred.emit(self._error)
+            return False
+        self._current_path = None
+        self._current_url = url
+        self._error = None
+        try:
+            self.player.stop()
+            self.player.setSource(QUrl(url))
+            self.player.play()
+            return True
+        except Exception as e:
+            self._error = f"Stream error: {e}"
+            self.error_occurred.emit(self._error)
+            log.error(f"play_url error: {e}")
+            return False
+
+    def current_source(self):
+        """(path|None, url|None) — what is loaded right now."""
+        return (self._current_path, getattr(self, "_current_url", None))
     def load(self, filepath: str):
         """Load a file without playing."""
         if not self._available:

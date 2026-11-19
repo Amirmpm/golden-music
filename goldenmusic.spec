@@ -60,6 +60,23 @@ a = Analysis(
         'playlist_dialog',
         'duplicates',
         'duplicates_dialog',
+        # AUDIT FIX #9: the five late imports the old spec missed
+        'playback_fx',
+        'playstats',
+        'userbackup',
+        'audio_output',
+        'tag_editor',
+        # v3: Liquid Glass + Nuvx shell + online + downloads + Win integration
+        'liquidglass',
+        'online',
+        'downloads',
+        'home_page',
+        'sidebar',
+        'search_page',
+        'downloads_page',
+        'smtc',
+        'winreg_apps',
+        'formatcaps',
     ],
     excludes=[
         # Web/network stacks the app never touches (QtNetwork kept: sip lazily

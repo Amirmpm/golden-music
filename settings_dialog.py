@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QCheckBox, QSpinBox, QLineEdit, QFileDialog,
     QGroupBox, QFormLayout, QMessageBox, QTabWidget, QWidget,
-    QFrame, QSizePolicy
+    QFrame, QSizePolicy, QSlider, QColorDialog
 )
 from PyQt6.QtGui import QPixmap
 
@@ -34,6 +34,9 @@ class SettingsDialog(QDialog):
         tabs = QTabWidget()
         tabs.addTab(self._build_appearance_tab(), "Appearance")
         tabs.addTab(self._build_playback_tab(), "Playback")
+        tabs.addTab(self._build_downloads_tab(), "Downloads")
+        tabs.addTab(self._build_online_tab(), "Online")
+        tabs.addTab(self._build_windows_tab(), "Windows")
         tabs.addTab(self._build_library_tab(), "Library")
         tabs.addTab(self._build_about_tab(), "About")
         layout.addWidget(tabs)
@@ -132,32 +135,346 @@ class SettingsDialog(QDialog):
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
         """)
 
+    _ACCENT_SWATCHES = ["#e9b957", "#4591ea", "#b57edc", "#ff2e63",
+                        "#2ecc71", "#f97316", "#e8590c", "#e2e8f0"]
+
     def _build_appearance_tab(self) -> QWidget:
+        """v3: the unified Liquid Glass design system (the 12-theme picker
+        is retired as the primary appearance mechanism; the legacy theme key
+        keeps being persisted so a rollback build still finds a look)."""
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setSpacing(12)
 
-        # Theme group
-        theme_group = QGroupBox("Theme")
-        theme_layout = QVBoxLayout(theme_group)
-        label = QLabel("Choose a color theme:")
-        theme_layout.addWidget(label)
-        self.theme_combo = QComboBox()
-        for name in Theme.names():
-            self.theme_combo.addItem(Theme.display_name(name), name)
-        theme_layout.addWidget(self.theme_combo)
+        glass = QGroupBox("Liquid Glass")
+        g = QFormLayout(glass)
 
-        # Theme preview
-        self.theme_preview = QLabel()
-        self.theme_preview.setFixedHeight(40)
-        self.theme_preview.setStyleSheet(f"border-radius: 8px; border: 1px solid {self.theme['border']};")
-        theme_layout.addWidget(self.theme_preview)
-        self.theme_combo.currentIndexChanged.connect(self._update_theme_preview)
+        self.lg_mode_combo = QComboBox()
+        self.lg_mode_combo.addItem("Follow Windows", "system")
+        self.lg_mode_combo.addItem("Light", "light")
+        self.lg_mode_combo.addItem("Dark", "dark")
+        g.addRow("Mode:", self.lg_mode_combo)
 
-        layout.addWidget(theme_group)
+        # accent swatches + custom
+        self._swatch_buttons = []
+        swatch_holder = QWidget()
+        sw = QHBoxLayout(swatch_holder)
+        sw.setContentsMargins(0, 0, 0, 0)
+        sw.setSpacing(6)
+        for hexv in self._ACCENT_SWATCHES:
+            b = QPushButton()
+            b.setFixedSize(26, 26)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setToolTip(hexv)
+            b.setStyleSheet(f"background: {hexv}; border-radius: 13px;"
+                            f"border: 1px solid rgba(255,255,255,0.35);")
+            b.clicked.connect(lambda _c, h=hexv: self._set_accent(h))
+            sw.addWidget(b)
+            self._swatch_buttons.append(b)
+        custom_btn = QPushButton("Custom…")
+        custom_btn.clicked.connect(self._pick_custom_accent)
+        sw.addWidget(custom_btn)
+        g.addRow("Accent color:", swatch_holder)
+
+        self.lg_art_cb = QCheckBox("Derive accent from album artwork")
+        g.addRow(self.lg_art_cb)
+
+        self.lg_transparency = QSlider(Qt.Orientation.Horizontal)
+        self.lg_transparency.setRange(0, 100)
+        g.addRow("Panel transparency:", self.lg_transparency)
+
+        self.lg_blur = QSlider(Qt.Orientation.Horizontal)
+        self.lg_blur.setRange(0, 200)
+        g.addRow("Blur / native backdrop:", self.lg_blur)
+
+        self.lg_corner = QSlider(Qt.Orientation.Horizontal)
+        self.lg_corner.setRange(50, 150)
+        g.addRow("Corner radius:", self.lg_corner)
+
+        self.lg_anim = QSlider(Qt.Orientation.Horizontal)
+        self.lg_anim.setRange(0, 200)
+        g.addRow("Animation intensity:", self.lg_anim)
+
+        self.lg_density = QComboBox()
+        for label in ("Compact", "Comfortable", "Spacious"):
+            self.lg_density.addItem(label, label.lower())
+        g.addRow("Interface density:", self.lg_density)
+
+        self.lg_background = QComboBox()
+        self.lg_background.addItem("Accent gradient", "gradient")
+        self.lg_background.addItem("Accent tint", "tint")
+        self.lg_background.addItem("Solid", "solid")
+        g.addRow("Background:", self.lg_background)
+
+        self.lg_reduced_cb = QCheckBox("Reduce motion (accessibility)")
+        g.addRow(self.lg_reduced_cb)
+
+        reset_row = QHBoxLayout()
+        self.lg_reset_btn = QPushButton("Reset to defaults")
+        self.lg_reset_btn.clicked.connect(self._lg_reset)
+        reset_row.addWidget(self.lg_reset_btn)
+        reset_row.addStretch(1)
+        g.addRow(reset_row)
+
+        layout.addWidget(glass)
+        layout.addStretch(1)
+        return tab
+
+    def _set_accent(self, hexv: str):
+        self.main_window.glass.accent = hexv
+        self._lg_live_apply()
+
+    def _pick_custom_accent(self):
+        from PyQt6.QtGui import QColor
+        c = QColorDialog.getColor(QColor(self.main_window.glass.accent), self,
+                                  "Custom accent color")
+        if c.isValid():
+            self.main_window.glass.accent = c.name()
+            self._lg_live_apply()
+
+    def _lg_live_apply(self, *_a):
+        self._sync_glass_from_controls()
+        mw = self.main_window
+        mw._apply_theme()
+        mw._save_config_debounced()
+
+    def _sync_glass_from_controls(self):
+        mw = self.main_window
+        g = mw.glass
+        g.mode = self.lg_mode_combo.currentData() or "system"
+        g.accent_from_art = self.lg_art_cb.isChecked()
+        g.transparency = self.lg_transparency.value()
+        g.blur = self.lg_blur.value()
+        g.corner = self.lg_corner.value()
+        g.anim_intensity = self.lg_anim.value()
+        g.density = self.lg_density.currentData() or "comfortable"
+        g.background = self.lg_background.currentData() or "gradient"
+        g.reduced_motion = self.lg_reduced_cb.isChecked()
+        g.validate()
+
+    def _lg_reset(self):
+        import liquidglass
+        mw = self.main_window
+        mw.glass = liquidglass.GlassSettings()
+        mw._apply_theme()
+        self._load_current_settings()
+        mw._save_config_debounced()
+
+    # ------------------------------------------------------------------
+    # Downloads tab
+    # ------------------------------------------------------------------
+    def _build_downloads_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setSpacing(12)
+
+        folder_group = QGroupBox("Download Folder (chosen once, reused)")
+        fl = QVBoxLayout(folder_group)
+        self.dl_folder_lbl = QLabel("…")
+        self.dl_folder_lbl.setWordWrap(True)
+        fl.addWidget(self.dl_folder_lbl)
+        row = QHBoxLayout()
+        self.dl_choose_btn = QPushButton("Choose folder…")
+        self.dl_choose_btn.clicked.connect(self._dl_choose)
+        row.addWidget(self.dl_choose_btn)
+        self.dl_open_btn = QPushButton("Open folder")
+        self.dl_open_btn.clicked.connect(
+            lambda: self.main_window._open_download_folder())
+        row.addWidget(self.dl_open_btn)
+        row.addStretch(1)
+        fl.addLayout(row)
+        layout.addWidget(folder_group)
+
+        info_group = QGroupBox("Manager")
+        il = QFormLayout(info_group)
+        self.dl_floor_lbl = QLabel(
+            "Downloads pause below 500 MB free disk space. "
+            "Completed files join your local library automatically "
+            "(duplicates are skipped).")
+        self.dl_floor_lbl.setWordWrap(True)
+        il.addRow(self.dl_floor_lbl)
+        self.dl_history_lbl = QLabel("0 completed downloads")
+        il.addRow(self.dl_history_lbl)
+        layout.addWidget(info_group)
+
+        clear_row = QHBoxLayout()
+        self.dl_clear_btn = QPushButton("Clear download history")
+        self.dl_clear_btn.clicked.connect(self._dl_clear_history)
+        clear_row.addWidget(self.dl_clear_btn)
+        clear_row.addStretch(1)
+        layout.addLayout(clear_row)
 
         layout.addStretch(1)
         return tab
+
+    def _dl_choose(self):
+        from pathlib import Path
+        mw = self.main_window
+        start = mw.download_folder or str(mw._default_download_dir())
+        folder = QFileDialog.getExistingDirectory(
+            self, "Download folder — used automatically for every future "
+                  "download", start)
+        if folder:
+            mw.download_folder = folder
+            if getattr(mw, "download_manager", None):
+                mw.download_manager.set_folder(Path(folder))
+            mw.downloads_page.set_folder(Path(folder))
+            mw._save_config_debounced()
+            self._load_current_settings()
+
+    def _dl_clear_history(self):
+        mw = self.main_window
+        mw.downloads_history = []
+        if getattr(mw, "download_manager", None):
+            mw.download_manager.load_history([])
+            mw.downloads_page.set_completed([])
+        mw._save_config_debounced()
+        self._load_current_settings()
+
+    # ------------------------------------------------------------------
+    # Online tab
+    # ------------------------------------------------------------------
+    def _build_online_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setSpacing(12)
+
+        src_group = QGroupBox("Online Music")
+        sl = QVBoxLayout(src_group)
+        self.online_cb = QCheckBox("Enable online search and streaming")
+        self.online_cb.stateChanged.connect(self._online_apply)
+        sl.addWidget(self.online_cb)
+        info = QLabel(
+            "Provider: Internet Archive — public-domain and freely licensed "
+            "audio. No account required; downloads are permitted by the "
+            "source. Additional licensed providers can be added by "
+            "implementing the OnlineProvider interface.")
+        info.setWordWrap(True)
+        sl.addWidget(info)
+        layout.addWidget(src_group)
+
+        hist_group = QGroupBox("Search History")
+        hl = QVBoxLayout(hist_group)
+        self.search_hist_lbl = QLabel("No recent searches")
+        self.search_hist_lbl.setWordWrap(True)
+        hl.addWidget(self.search_hist_lbl)
+        row = QHBoxLayout()
+        clear = QPushButton("Clear search history")
+        clear.clicked.connect(self._clear_search_history)
+        row.addWidget(clear)
+        row.addStretch(1)
+        hl.addLayout(row)
+        layout.addWidget(hist_group)
+
+        layout.addStretch(1)
+        return tab
+
+    def _online_apply(self, *_a):
+        mw = self.main_window
+        mw.online_enabled = self.online_cb.isChecked()
+        mw._save_config_debounced()
+
+    def _clear_search_history(self):
+        mw = self.main_window
+        mw.search_history = []
+        mw.search_page.set_history([])
+        mw._save_config_debounced()
+        self._load_current_settings()
+
+    # ------------------------------------------------------------------
+    # Windows integration tab
+    # ------------------------------------------------------------------
+    def _build_windows_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setSpacing(12)
+
+        reg_group = QGroupBox("Default apps & Open with")
+        rl = QVBoxLayout(reg_group)
+        self.winreg_status_lbl = QLabel("…")
+        self.winreg_status_lbl.setWordWrap(True)
+        rl.addWidget(self.winreg_status_lbl)
+        policy = QLabel(
+            "Golden Music registers itself so Windows lists it under "
+            "Default apps → Audio, and in every audio file's Open with menu. "
+            "It never changes your current default player — the choice is "
+            "always yours, made in Windows Settings.")
+        policy.setWordWrap(True)
+        rl.addWidget(policy)
+        row = QHBoxLayout()
+        self.winreg_btn = QPushButton("Register / refresh")
+        self.winreg_btn.clicked.connect(self._winreg_register)
+        row.addWidget(self.winreg_btn)
+        self.winreg_remove_btn = QPushButton("Remove registration")
+        self.winreg_remove_btn.clicked.connect(self._winreg_unregister)
+        row.addWidget(self.winreg_remove_btn)
+        self.winreg_open_btn = QPushButton("Open Windows Default apps")
+        self.winreg_open_btn.clicked.connect(self._winreg_open_defaults)
+        row.addWidget(self.winreg_open_btn)
+        row.addStretch(1)
+        rl.addLayout(row)
+        layout.addWidget(reg_group)
+
+        media_group = QGroupBox("Windows media controls")
+        ml = QVBoxLayout(media_group)
+        self.smtc_status_lbl = QLabel("…")
+        self.smtc_status_lbl.setWordWrap(True)
+        ml.addWidget(self.smtc_status_lbl)
+        smtc_info = QLabel(
+            "System Media Transport Controls show Golden Music in the "
+            "Windows media overlay, lock screen and taskbar flyout "
+            "(Play/Pause/Next/Previous + track info). Global keyboard media "
+            "keys work independently of this.")
+        smtc_info.setWordWrap(True)
+        ml.addWidget(smtc_info)
+        layout.addWidget(media_group)
+
+        fmt_group = QGroupBox("Audio formats")
+        fl = QVBoxLayout(fmt_group)
+        self.formats_lbl = QLabel("…")
+        self.formats_lbl.setWordWrap(True)
+        fl.addWidget(self.formats_lbl)
+        layout.addWidget(fmt_group)
+
+        layout.addStretch(1)
+        return tab
+
+    def _winreg_register(self):
+        import winreg_apps
+        try:
+            report = winreg_apps.register_app()
+            n = len(report.get("registered", []))
+            QMessageBox.information(
+                self, "Windows integration",
+                f"Registered for {n} verified audio format(s).\n\n"
+                f"Skipped (not verified on this machine): "
+                f"{', '.join(report.get('skipped', [])) or 'none'}\n\n"
+                f"Your default player is unchanged — to make Golden Music "
+                f"the default, open Windows Settings → Default apps and set "
+                f"it for audio.")
+        except Exception as e:
+            QMessageBox.warning(self, "Windows integration",
+                                 f"Registration failed:\n{e}")
+        self._load_current_settings()
+
+    def _winreg_unregister(self):
+        import winreg_apps
+        try:
+            winreg_apps.unregister_app()
+            QMessageBox.information(self, "Windows integration",
+                                     "Golden Music's registration was removed.")
+        except Exception as e:
+            QMessageBox.warning(self, "Windows integration",
+                                 f"Removal failed:\n{e}")
+        self._load_current_settings()
+
+    def _winreg_open_defaults(self):
+        import winreg_apps
+        if not winreg_apps.open_default_apps_settings():
+            QMessageBox.information(
+                self, "Windows integration",
+                "Open Windows Settings → Apps → Default apps, then choose "
+                "Golden Music for audio files.")
 
     def _build_playback_tab(self) -> QWidget:
         from PyQt6.QtWidgets import QScrollArea
@@ -394,11 +711,21 @@ class SettingsDialog(QDialog):
 
     def _load_current_settings(self):
         mw = self.main_window
-        # Appearance
-        idx = self.theme_combo.findData(self.main_window.theme_name)
-        if idx >= 0:
-            self.theme_combo.setCurrentIndex(idx)
-        self._update_theme_preview()
+        # Appearance — Liquid Glass (v3)
+        g = getattr(mw, "glass", None)
+        if g is not None:
+            self.lg_mode_combo.setCurrentIndex(
+                max(0, self.lg_mode_combo.findData(g.mode)))
+            self.lg_art_cb.setChecked(g.accent_from_art)
+            self.lg_transparency.setValue(int(g.transparency))
+            self.lg_blur.setValue(int(g.blur))
+            self.lg_corner.setValue(int(g.corner))
+            self.lg_anim.setValue(int(g.anim_intensity))
+            self.lg_density.setCurrentIndex(
+                max(0, self.lg_density.findData(g.density)))
+            self.lg_background.setCurrentIndex(
+                max(0, self.lg_background.findData(g.background)))
+            self.lg_reduced_cb.setChecked(bool(g.reduced_motion))
         self.auto_theme_cb.setChecked(getattr(self.main_window, 'auto_theme_enabled', False))
         self.toast_cb.setChecked(getattr(self.main_window, '_toast_enabled', True))
         self.tray_min_cb.setChecked(getattr(self.main_window, 'taskbar_close_to_tray', False))
@@ -432,13 +759,64 @@ class SettingsDialog(QDialog):
         self.auto_rescan_cb.setChecked(getattr(self.main_window, 'auto_rescan', True))
         self.remember_track_cb.setChecked(getattr(self.main_window, 'remember_track', True))
 
-    def _update_theme_preview(self):
-        name = self.theme_combo.currentData()
-        t = Theme.get(name)
-        self.theme_preview.setStyleSheet(
-            f"border-radius: 8px; border: 1px solid {t['border']};"
-            f"background: linear-gradient(135deg, {t['window_bg']}, {t['panel_bg']}, {t['gold']});"
-        )
+        # Downloads / Online / Windows (v3)
+        dl_folder = getattr(mw, 'download_folder', '') or str(
+            mw._default_download_dir() if hasattr(mw, '_default_download_dir')
+            else '')
+        self.dl_folder_lbl.setText(
+            f"Current folder: {dl_folder}\nAll downloads land here "
+            f"automatically — change it only when you really want to.")
+        n_hist = len(getattr(mw, 'downloads_history', []))
+        self.dl_history_lbl.setText(
+            f"{n_hist} completed download" + ("s" if n_hist != 1 else ""))
+        self.online_cb.setChecked(getattr(mw, 'online_enabled', True))
+        sh = getattr(mw, 'search_history', [])
+        self.search_hist_lbl.setText(
+            "\n".join(sh) if sh else "No recent searches")
+        try:
+            import winreg_apps
+            st = winreg_apps.registration_status()
+            if not st.get("windows"):
+                self.winreg_status_lbl.setText(
+                    "Not running on Windows — registration applies on the "
+                    "Windows build.")
+            elif st.get("registered"):
+                self.winreg_status_lbl.setText(
+                    f"Registered. Appears in Default apps for: "
+                    f"{', '.join(st.get('extensions', []))}")
+            else:
+                self.winreg_status_lbl.setText(
+                    "Not registered yet (portable build?). Use "
+                    "'Register / refresh' to make Golden Music appear in "
+                    "Default apps and Open with.")
+        except Exception as e:
+            self.winreg_status_lbl.setText(f"Status unavailable: {e}")
+        try:
+            import smtc as _smtc_mod
+            sm = getattr(mw, '_smtc', None)
+            if _smtc_mod.SystemMediaControls.available() and sm and sm.is_active():
+                self.smtc_status_lbl.setText(
+                    "Active — Golden Music appears in the Windows media "
+                    "overlay, lock screen and taskbar flyout.")
+            elif _smtc_mod.SystemMediaControls.available():
+                self.smtc_status_lbl.setText(
+                    "Available but not active — restart the app.")
+            else:
+                self.smtc_status_lbl.setText(
+                    "WinRT bindings not installed on this machine "
+                    "(pip install winrt-runtime winrt-Windows.Media "
+                    "winrt-Windows.Storage.Streams). Global media keys and "
+                    "tray controls still work.")
+        except Exception as e:
+            self.smtc_status_lbl.setText(f"Status unavailable: {e}")
+        try:
+            import formatcaps
+            exts = formatcaps.probe_supported_exts()
+            self.formats_lbl.setText(
+                f"Verified playable on this machine: "
+                f"{', '.join(exts)}\nOnly these are registered with Windows.")
+        except Exception as e:
+            self.formats_lbl.setText(f"Format probe unavailable: {e}")
 
     def _on_output_changed(self, idx):
         """Switch the audio output device immediately (no OK needed)."""
@@ -501,11 +879,10 @@ class SettingsDialog(QDialog):
             QMessageBox.warning(self, APP_NAME, f"Duplicate finder failed:\n{e}")
 
     def _on_ok(self):
-        # Apply appearance
-        new_theme = self.theme_combo.currentData()
-        if new_theme != self.main_window.theme_name:
-            self.main_window.theme_name = new_theme
-            self.main_window._apply_theme()
+        # Apply appearance — Liquid Glass values were applied live as the
+        # controls changed; make sure the final state is synced + applied.
+        self._sync_glass_from_controls()
+        self.main_window._apply_theme()
         self.main_window.auto_theme_enabled = self.auto_theme_cb.isChecked()
         self.main_window._apply_auto_theme_setting()
         self.main_window._toast_enabled = self.toast_cb.isChecked()

@@ -98,8 +98,8 @@ check("remove_current_no_dangling_state", remove_current_advances_cleanly)
 print("\n=== Refresh Gating ===")
 def refresh_disabled_flag_exists():
     # Buttons exist and are enabled in idle state
-    assert w.rail.btn_add.isEnabled()
-    assert w.rail.btn_refresh.isEnabled()
+    assert w.rail.rows["addfolder"].isEnabled()
+    assert w.rail.rows["refresh"].isEnabled()
 check("scan_buttons_enabled_when_idle", refresh_disabled_flag_exists)
 
 print("\n=== Crossfade Removed ===")

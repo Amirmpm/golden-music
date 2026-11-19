@@ -29,6 +29,9 @@ def handler(mode, ctx, message):
 
 qInstallMessageHandler(handler)
 
+import testenv as _testenv_fix
+_testenv_fix.install()
+del _testenv_fix
 import main as m  # noqa: E402
 
 lst = QListWidget()

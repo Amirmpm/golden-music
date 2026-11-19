@@ -50,6 +50,10 @@ def check(name, ok, detail=""):
           + (f"  ->  {detail}" if detail and not ok else ""))
 
 
+# v3: the app boots on HOME — switch to the Library page so list
+# focus/selection tests exercise the same widget the user would.
+w._on_rail_clicked("library")
+app.processEvents()
 # Populate the library list so navigation/type-ahead are meaningful
 w.library = [str(Path(os.environ["HOME"]) / f"song{i}.mp3") for i in range(5)]
 w._rebuild_library_list()

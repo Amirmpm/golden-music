@@ -116,6 +116,7 @@ class Icon:
     VOLUME_MUTE = "volume-mute"
 
     # ---- Navigation ----
+    HOME = "house"
     LIBRARY = "library"
     FAVORITES_NAV = "favorites-nav"
     FOLDER_ADD = "folder-add"
@@ -135,6 +136,9 @@ class Icon:
 
     # ---- Search ----
     SEARCH = "search"
+
+    # ---- Downloads ----
+    DOWNLOAD = "download"
 
     # ---- Sort ----
     SORT_ASC = "sort-asc"

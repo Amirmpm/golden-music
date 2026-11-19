@@ -1,5 +1,85 @@
 # Changelog
 
+## [3.0.0] - 2026-11-19
+
+### The Nuvx Desktop transformation
+
+**UI/UX (Nuvx Desktop recreation)**
+- Nuvx-style navigation sidebar (236 px, collapsible to a 76 px icon rail,
+  animated); navigation is Home / Search / Library / Favorites / Albums /
+  Stats / Downloads, Settings pinned at the bottom.
+- The player strip moved to the TOP of the window (Nuvx layout).
+- Home = your LOCAL music library in the Nuvx home layout: strapline
+  shelves + bold headers + horizontal artwork cards (Recently Played,
+  Recently Added, Albums, Artists, Playlists, Favorites, Recently
+  Downloaded) — never online recommendations, never placeholder data.
+- Search = ONLINE music search page (42 px pill field, history
+  suggestions, result rows with source info, context actions).
+- Golden Music branding kept throughout; the supplied logo.png drives
+  the window/app icon identity.
+
+**Liquid Glass design system (replaces the 12-theme picker)**
+- One unified translucent material: accent colour (incl.
+  artwork-derived accent), transparency, blur (native Mica/Acrylic on
+  Windows 11 22H2+ with opaque fallback), corner radius, density,
+  animation intensity, reduced-motion — all persisted, validated and
+  live-applied.
+- The old 12-theme picker is retired as the appearance system; existing
+  configs migrate automatically (accent = your old theme's accent,
+  dark/light preserved) and a rollback build still finds the legacy key.
+
+**Online music + downloads**
+- Provider-based online architecture (OnlineProvider interface);
+  Internet Archive provider ships (public-domain audio, no auth,
+  downloads permitted).
+- Streaming through the SAME audio engine (no second playback system);
+  mixed local/online queues ("Play next" / "Add to queue").
+- Download manager: one-time folder configuration, queue, progress %,
+  speed, sizes, pause/resume (HTTP Range), cancel, retry, duplicate
+  detection (" (n)" suffixing), safe filenames, .part + atomic rename,
+  size verification, 500 MB disk floor. Completed files join the existing
+  local library exactly once.
+
+**Windows integration**
+- App registration fixed: RegisteredApplications + Capabilities +
+  FileAssociations + ProgID + OpenWithProgids — Golden Music now APPEARS
+  in Windows Default apps (never writes protected UserChoice; a Settings
+  action opens the right page). Installer and app register the same
+  surface; uninstall removes only Golden Music's own entries.
+- Windows media controls: System Media Transport Controls (SMTC) —
+  overlay/lock-screen/taskbar media session with Play/Pause/Next/Prev
+  + metadata + artwork (optional winrt wheels; graceful degradation).
+  Global keyboard media keys remain, tested independently.
+- Runtime codec probing (QMediaFormat): only formats the ACTIVE backend
+  verifiably decodes are advertised/registered. FFmpeg media plugin
+  restored + WMF forcing removed (AUDIT #3: OGG/Opus were advertised but
+  unplayable).
+
+**Fixed (from the v3 technical audit)**
+- HIGH: library/favorites no longer pruned when a drive is offline —
+  entries survive unmounted/network drives instead of being silently
+  wiped on the next save.
+- MEDIUM: second-instance stale-lock race — a running-but-unreachable
+  instance now gets bounded retry then a clear refusal instead of
+  launching a config-corrupting second GUI.
+- MEDIUM: the orphaned queue feature is wired — "Play next" and
+  "Add to queue" context-menu actions.
+- MEDIUM: PyInstaller hiddenimports completed (5 missing late imports +
+  all v3 modules).
+- MEDIUM: stale SECURITY_AUDIT claims re-verified against v3 network
+  surface (GitHub updater + lrclib lyrics + archive.org provider).
+- LOW: View model completed (7 pages), docs drift (tray docstring,
+  build script version echoes), gm_stress dev-path hardcoded.
+- CI: all 12 test suites repaired (broke at the main.py -> main.pyw
+  rename) via a testenv import shim; v3 regression suite added;
+  pip-audit + SBOM steps added.
+
+### Compatibility
+- Config/library/playlists/favorites/history/stats preserved; the
+  theme key migrates automatically (and stays for rollback).
+- Same installer/upgrade path (Inno AppId unchanged); per-user install.
+
+
 All notable changes to Golden Music will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
@@ -425,6 +505,6 @@ The first stable, production-ready version of Golden Music!
 
 <div align="center">
 
-**Golden Music v2.2.0** — Psychology Theme Suite 🎨
+**Golden Music v3.0.0** — Nuvx Desktop Shell · Liquid Glass · Online Music · Downloads · Windows Integration 🪟
 
 </div>

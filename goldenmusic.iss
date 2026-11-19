@@ -15,7 +15,7 @@
 ; by hand this default must match version.py (scripts/test_version_sync.py
 ; asserts the agreement, so a drift breaks CI instead of shipping).
 #ifndef AppVersion
-#define AppVersion     "2.2.0"
+#define AppVersion     "3.0.0"
 #endif
 #define AppPublisher   "Golden Music"
 #define AppExeName     "GoldenMusic.exe"
@@ -128,6 +128,60 @@ Root: HKA; Subkey: "Software\Classes\.aac\OpenWithProgids"; \
 Root: HKA; Subkey: "Software\Classes\.wma\OpenWithProgids"; \
     ValueType: string; ValueName: "GoldenMusic.AudioFile"; ValueData: ""; \
     Flags: uninsdeletevalue; Tasks: fileassoc
+; --- v3 FIX (Windows does not recognize Golden Music as a music player):
+; --- RegisteredApplications + Capabilities + FileAssociations make the app
+; --- appear in Windows Settings -> Default apps -> "Golden Music".
+; --- Policy: per-user (HKA/HKCU), only verified formats, never UserChoice —
+; --- the user's default player is NEVER changed by the installer.
+Root: HKA; Subkey: "Software\RegisteredApplications"; \
+    ValueType: string; ValueName: "Golden Music"; \
+    ValueData: "Software\GoldenMusic\Capabilities"; \
+    Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKA; Subkey: "Software\GoldenMusic\Capabilities"; \
+    ValueType: string; ValueName: "ApplicationName"; \
+    ValueData: "Golden Music"; Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKA; Subkey: "Software\GoldenMusic\Capabilities"; \
+    ValueType: string; ValueName: "ApplicationDescription"; \
+    ValueData: "The modern Windows music player - local library, online search and streaming, downloads."; \
+    Flags: uninsdeletekey; Tasks: fileassoc
+#define GMExtCount 9
+;
+Root: HKA; Subkey: "Software\GoldenMusic\Capabilities\FileAssociations"; \
+    ValueType: string; ValueName: ".mp3"; \
+    ValueData: "GoldenMusic.AudioFile"; \
+    Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKA; Subkey: "Software\GoldenMusic\Capabilities\FileAssociations"; \
+    ValueType: string; ValueName: ".wav"; \
+    ValueData: "GoldenMusic.AudioFile"; \
+    Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKA; Subkey: "Software\GoldenMusic\Capabilities\FileAssociations"; \
+    ValueType: string; ValueName: ".flac"; \
+    ValueData: "GoldenMusic.AudioFile"; \
+    Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKA; Subkey: "Software\GoldenMusic\Capabilities\FileAssociations"; \
+    ValueType: string; ValueName: ".ogg"; \
+    ValueData: "GoldenMusic.AudioFile"; \
+    Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKA; Subkey: "Software\GoldenMusic\Capabilities\FileAssociations"; \
+    ValueType: string; ValueName: ".oga"; \
+    ValueData: "GoldenMusic.AudioFile"; \
+    Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKA; Subkey: "Software\GoldenMusic\Capabilities\FileAssociations"; \
+    ValueType: string; ValueName: ".opus"; \
+    ValueData: "GoldenMusic.AudioFile"; \
+    Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKA; Subkey: "Software\GoldenMusic\Capabilities\FileAssociations"; \
+    ValueType: string; ValueName: ".m4a"; \
+    ValueData: "GoldenMusic.AudioFile"; \
+    Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKA; Subkey: "Software\GoldenMusic\Capabilities\FileAssociations"; \
+    ValueType: string; ValueName: ".aac"; \
+    ValueData: "GoldenMusic.AudioFile"; \
+    Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKA; Subkey: "Software\GoldenMusic\Capabilities\FileAssociations"; \
+    ValueType: string; ValueName: ".wma"; \
+    ValueData: "GoldenMusic.AudioFile"; \
+    Flags: uninsdeletekey; Tasks: fileassoc
 
 [Files]
 Source: "dist\GoldenMusic\*"; DestDir: "{app}"; \

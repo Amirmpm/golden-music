@@ -14,7 +14,7 @@ import traceback
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 os.environ["QT_MEDIA_BACKEND"] = "dummy"
 os.environ["PYTHONIOENCODING"] = "utf-8"
-sys.path.insert(0, r"E:\my-documents\ClaudeCode\GoldenMusic")
+sys.path.insert(0, r".")
 
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QApplication, QMessageBox

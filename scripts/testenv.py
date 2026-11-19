@@ -28,9 +28,12 @@ Escape hatch: GOLDENMUSIC_ALLOW_REAL_CONFIG=1 skips isolation entirely
 (e.g. scripts/live_theme_shots.ps1, which intentionally uses live data).
 """
 import atexit
+import importlib.util
 import os
 import shutil
+import sys
 import tempfile
+from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 _installed = False
@@ -63,6 +66,11 @@ def install():
     atexit.register(_restore)
     print(f"testenv: isolated user data -> {_tmp_home}", flush=True)
     _installed = True
+    # Repair `from main import ...` after the main.py -> main.pyw rename.
+    try:
+        _install_main_alias()
+    except Exception as e:
+        print(f"testenv: main.pyw alias failed: {e}", flush=True)
     return _tmp_home
 
 
@@ -99,3 +107,32 @@ def _restore():
             shutil.rmtree(_tmp_home, ignore_errors=True)
     except Exception:
         pass
+
+# ---------------------------------------------------------------------------
+# main.pyw import alias
+# ---------------------------------------------------------------------------
+# The app entry module was renamed main.py -> main.pyw (commit da0fd34) but
+# every GUI test does `from main import MainWindow`. Python's import system
+# only resolves .py — so ALL 12 CI suites crashed with ModuleNotFoundError
+# after the rename. Registering the alias here (called by install(), which
+# every suite invokes before importing the app) repairs them all at once.
+# ---------------------------------------------------------------------------
+_MAIN_ALIAS_INSTALLED = False
+
+
+def _install_main_alias():
+    global _MAIN_ALIAS_INSTALLED
+    if _MAIN_ALIAS_INSTALLED or "main" in sys.modules:
+        return
+    pyw = REPO_ROOT / "main.pyw"
+    if not pyw.is_file():
+        return
+    root = str(REPO_ROOT)
+    if root not in sys.path:
+        sys.path.insert(0, root)   # main.pyw imports its sibling modules
+    spec = importlib.util.spec_from_loader(
+        "main", SourceFileLoader("main", str(pyw)))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["main"] = mod
+    spec.loader.exec_module(mod)
+    _MAIN_ALIAS_INSTALLED = True

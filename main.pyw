@@ -13,11 +13,13 @@ v5.1 changes:
 import sys
 import os
 
-# CRITICAL: Set audio backend to Windows Media Foundation for better quality
-# This must be set BEFORE any Qt imports
-# On Windows, WMF provides better MP3 decoding quality than FFmpeg
+# AUDIT FIX #3 (codec/backend mismatch): do NOT force the Windows Media
+# Foundation backend. Qt's default backend (FFmpeg) decodes every format we
+# register (.mp3 .wav .flac .ogg .oga .opus .m4a .aac .wma); forcing WMF
+# made OGG/Vorbis/Opus unplayable while they were still advertised.
+# Users who specifically prefer WMF can still opt in via the environment.
 if sys.platform == 'win32':
-    os.environ.setdefault('QT_MEDIA_BACKEND', 'windowsmediafoundation')
+    os.environ.pop('QT_MEDIA_BACKEND', None)   # never force; Qt default wins
 
 import json
 import logging
@@ -73,6 +75,19 @@ import updater
 from update_dialog import UpdateCheckWorker, UpdateBanner, UpdateDialog
 from mediakeys import MediaKeyFilter
 
+# --- v3: Liquid Glass system, Nuvx Desktop shell, online music, downloads,
+# --- Windows integration (SMTC + app registration + format probing)
+import liquidglass
+import formatcaps
+import winreg_apps
+import smtc
+import online as online_mod
+import downloads as dl_mod
+from sidebar import Sidebar
+from home_page import HomePage
+from search_page import SearchPage, StreamResolveWorker
+from downloads_page import DownloadsPage
+
 try:
     from autottheme import windows_prefers_dark as _os_prefers_dark
 except ImportError:
@@ -125,8 +140,19 @@ class RepeatMode(Enum):
 
 
 class View(Enum):
+    HOME = "home"
+    SEARCH = "search"
     LIBRARY = "library"
     FAVORITES = "favorites"
+    ALBUMS = "albums"
+    STATS = "stats"
+    DOWNLOADS = "downloads"
+
+
+# QStackedWidget page indices (v3 order). The stats auto-refresh timer and
+# every navigation branch must use these, never raw numbers.
+PAGE_HOME, PAGE_SEARCH, PAGE_LIBRARY, PAGE_FAVORITES = 0, 1, 2, 3
+PAGE_ALBUMS, PAGE_STATS, PAGE_DOWNLOADS = 4, 5, 6
 
 
 class SortMode(Enum):
@@ -1682,6 +1708,23 @@ class AlbumsWorkerThread(QThread):
 # ============================================================================
 # Main Window
 # ============================================================================
+class FnWorker(QThread):
+    """Tiny QThread wrapper: run a zero-arg callable off the GUI thread
+    and deliver its result on the GUI thread (queued signal)."""
+    done = pyqtSignal(object)
+
+    def __init__(self, fn, parent=None):
+        super().__init__(parent)
+        self._fn = fn
+
+    def run(self):
+        try:
+            self.done.emit(self._fn())
+        except Exception as e:
+            log.debug(f"FnWorker failed: {e}")
+            self.done.emit(None)
+
+
 class MainWindow(QMainWindow):
 
     def __init__(self):
@@ -1729,6 +1772,19 @@ class MainWindow(QMainWindow):
         # Search typing debounce timer (created lazily in _on_search_changed)
         self._search_debounce = None
 
+        # --- v3 state: Liquid Glass, online music, downloads, recently played
+        self.glass = liquidglass.GlassSettings()
+        self.recently_played = []      # [path, ...] most-recent-first (cap 30)
+        self.search_history = []       # persisted, validated via online module
+        self.download_folder = ""      # configured ONCE, reused thereafter
+        self.downloads_history = []   # completed-download records
+        self.online_enabled = True
+        self.current_online = None    # OnlineTrack while streaming
+        self.online_queue = []         # pending online tracks (play next)
+        self.download_manager = None
+        self._smtc = None
+        self._artwork_accent_job = None
+
         # Settings
         self.auto_rescan = True
         self.remember_track = True
@@ -1771,7 +1827,7 @@ class MainWindow(QMainWindow):
             self._stats_view_timer = QTimer(self)
             self._stats_view_timer.setInterval(60_000)
             self._stats_view_timer.timeout.connect(
-                lambda: (self.stack.currentIndex() == 3) and self._refresh_stats_view())
+                lambda: (self.stack.currentIndex() == PAGE_STATS) and self._refresh_stats_view())
             self._stats_view_timer.start()
         except Exception as e:
             log.warning(f"stats init failed: {e}")
@@ -1818,6 +1874,8 @@ class MainWindow(QMainWindow):
         # UI
         self._build_ui()
         self._apply_theme()
+        # v3: downloads + SMTC + home/search data wiring (needs widgets)
+        self._init_v3_systems()
         # Defer config loading to after window is shown (instant launch)
         self._force_quit = False
         self._last_volume = 80
@@ -1890,11 +1948,15 @@ class MainWindow(QMainWindow):
     def _on_os_theme_changed(self, prefer_dark: bool):
         if not self.auto_theme_enabled:
             return
-        target = self.AUTO_DARK_THEME if prefer_dark else self.AUTO_LIGHT_THEME
-        if target != self.theme_name:
-            self.theme_name = target
+        # v3: "follow Windows" is the glass system mode
+        if self.glass.mode != "system":
+            self.glass.mode = "system"
             self._apply_theme()
             self._save_config()
+            return
+        # mode already 'system' — a fresh apply re-derives dark/light
+        self._apply_theme()
+        self._save_config()
 
     def open_external_files(self, paths, reveal: bool = True) -> bool:
         """Play files handed over by the OS ("Open with", double-click,
@@ -1941,9 +2003,15 @@ class MainWindow(QMainWindow):
         top.setContentsMargins(0, 0, 0, 0)
         top.setSpacing(0)
 
-        self.rail = SideRail(self.theme)
-        self.rail.rail_clicked.connect(self._on_rail_clicked)
-        top.addWidget(self.rail)
+        # Nuvx Desktop sidebar (236 px, collapsible to a 76 px rail);
+        # `self.rail` keeps the historical attribute name for theme and
+        # dialog anchor code paths.
+        self.sidebar = Sidebar(
+            self.theme,
+            logo_path=str(Path(__file__).parent / "assets" / "logo.png"))
+        self.sidebar.nav_clicked.connect(self._on_rail_clicked)
+        self.rail = self.sidebar
+        top.addWidget(self.sidebar)
 
         # Loading overlay (covers the whole window during slow operations)
         self.loading_overlay = LoadingOverlay(self)
@@ -2014,24 +2082,35 @@ class MainWindow(QMainWindow):
         top_row_w.setLayout(top_row)
         self.main_layout.addWidget(top_row_w)
 
-        # Stack
+        # Stack — v3 Nuvx page order: Home (local library), Search (online),
+        # Library, Favorites, Albums, Stats, Downloads
         self.stack = QStackedWidget()
         self.stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.stack.addWidget(self._build_home_page())
+        self.stack.addWidget(self._build_search_page())
         self.stack.addWidget(self._build_library_page())
         self.stack.addWidget(self._build_favorites_page())
         self.stack.addWidget(self._build_albums_page())
         self.stack.addWidget(self._build_stats_page())
+        self.stack.addWidget(self._build_downloads_page())
         self.main_layout.addWidget(self.stack, 1)
+        # v3: the app opens on Home (Nuvx navigation model)
+        self.stack.setCurrentIndex(PAGE_HOME)
+        self.current_view = View.HOME
+        self.page_title.setText("Home")
 
+        # Player strip at the TOP of the window (Nuvx layout: the 56 px
+        # player bar doubles as the title area) — created before the
+        # content area so the root layout order becomes:
+        # progress bar -> player strip -> content.
+        self.player_bar = PlayerBar(self.theme)
         top.addWidget(self.main_area, 1)
         outer.addLayout(top, 1)
+        outer.addWidget(self.player_bar)
 
-        # Player bar
-        self.player_bar = PlayerBar(self.theme)
         # Non-modal update badge — pinned above the player bar, bottom-right
         self._update_banner = UpdateBanner(self)
         self._update_banner.reposition_if_visible()
-        outer.addWidget(self.player_bar)
         # Cover click → fullscreen player; title/artist click →
         # track info dialog (separate handlers so the cover opens the
         # immersive view while the text still shows track details).
@@ -2069,6 +2148,57 @@ class MainWindow(QMainWindow):
         icon_path = Path(__file__).parent / "assets" / "icon.png"
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
+
+    # ------------------------------------------------------------------
+    # v3 pages: Home (local library), Search (online), Downloads
+    # ------------------------------------------------------------------
+
+    def _build_home_page(self) -> QWidget:
+        """Home = the user's LOCAL music library in the Nuvx home layout."""
+        self.home_page = HomePage(self.theme)
+        self.home_page.play_requested.connect(
+            lambda item: self._home_play(item))
+        self.home_page.play_next_requested.connect(
+            lambda item: self._home_play_next(item))
+        self.home_page.add_queue_requested.connect(
+            lambda item: self._home_add_queue(item))
+        self.home_page.favorite_requested.connect(
+            lambda item: self._home_favorite(item))
+        self.home_page.add_to_playlist_requested.connect(
+            lambda item: self._show_playlists())
+        self.home_page.open_album_requested.connect(
+            lambda _item: self._on_rail_clicked("albums"))
+        self.home_page.open_artist_requested.connect(
+            lambda item: self._home_open_artist(item))
+        self.home_page.track_info_requested.connect(
+            lambda item: self._home_track_info(item))
+        self.home_page.add_folder_requested.connect(self._on_add_folder)
+        self.home_page.see_all_requested.connect(self._home_see_all)
+        return self.home_page
+
+    def _build_search_page(self) -> QWidget:
+        """Search = ONLINE music search (providers, streaming)."""
+        self.search_page = SearchPage(
+            self.theme,
+            provider=online_mod.provider_by_name("internetarchive"))
+        self.search_page.search_triggered.connect(self._on_search_query)
+        self.search_page.play_track_requested.connect(self._play_online_track)
+        self.search_page.play_next_requested.connect(
+            lambda t: self.online_queue.insert(0, t))
+        self.search_page.add_queue_requested.connect(
+            lambda t: self.online_queue.append(t))
+        self.search_page.download_track_requested.connect(
+            self._download_online_track)
+        return self.search_page
+
+    def _build_downloads_page(self) -> QWidget:
+        """Download manager page (queue, progress, completed)."""
+        self.downloads_page = DownloadsPage(self.theme)
+        self.downloads_page.choose_folder_requested.connect(
+            self._choose_download_folder)
+        self.downloads_page.open_folder_requested.connect(
+            self._open_download_folder)
+        return self.downloads_page
 
     def _build_library_page(self) -> QWidget:
         """Two-column layout: track list LEFT, cover art RIGHT."""
@@ -2657,14 +2787,27 @@ class MainWindow(QMainWindow):
         self.player_bar.vol_slider.setValue(v)
 
     def _early_load_theme(self):
-        """Synchronously read just the theme key from the config file.
+        """Synchronously read the appearance keys from the config file.
         Tiny local-JSON read (~µs) that lets _build_ui() paint with the
-        user's saved theme instead of the DEFAULT dark one — the root fix
-        for light themes starting life with stale dark-theme inline colors."""
+        user's saved look instead of the DEFAULT dark one — the root fix
+        for light themes starting life with stale dark-theme inline colors.
+
+        v3: the primary key is the Liquid Glass ``liquid`` section; the
+        legacy ``theme`` key is only consulted when ``liquid`` is absent
+        (fresh pre-v3 config) and migrated in place."""
         try:
             cfg, ok = load_json_file(config_path(), "config")
-            if ok and isinstance(cfg, dict) and cfg.get("theme"):
-                self.theme_name = Theme.normalize(str(cfg["theme"]))
+            if ok and isinstance(cfg, dict):
+                if cfg.get("liquid"):
+                    self.glass = liquidglass.GlassSettings.from_dict(
+                        cfg.get("liquid"))
+                elif cfg.get("theme"):
+                    self.glass, _summary = liquidglass.migrate_legacy_config(cfg)
+                    log.info("liquid glass: migrated legacy theme "
+                             f"{_summary.get('legacy_theme')}")
+                if cfg.get("theme"):
+                    self.theme_name = Theme.normalize(str(cfg["theme"]))
+                # keep the legacy dict in sync for rollback compatibility
                 self.theme = Theme.get(self.theme_name)
         except Exception as e:
             log.debug(f"early theme load skipped: {e}")
@@ -2740,10 +2883,28 @@ class MainWindow(QMainWindow):
             pass
 
     def _apply_theme(self):
-        self.theme = Theme.get(self.theme_name)
+        # v3: the unified Liquid Glass system replaces the 12-theme picker
+        # as the primary appearance engine. The legacy theme table stays
+        # available (Theme.get) for rollback builds only.
+        try:
+            prefers_dark = None
+            try:
+                prefers_dark = _os_prefers_dark()
+            except Exception:
+                prefers_dark = True
+            self.theme = liquidglass.build_glass_theme(
+                self.glass, is_dark=None, os_prefers_dark=prefers_dark)
+        except Exception as e:
+            log.warning(f"liquid glass build failed — legacy theme: {e}")
+            self.theme = Theme.get(self.theme_name)
         theme_changed = (getattr(self, "_last_theme", None) or {}).get("name") \
             != self.theme.get("name")
-        qss = build_qss(self.theme)
+        # QSS renders the translucent glass material; QColor painters keep
+        # the hex-only dict (see liquidglass docstring).
+        try:
+            qss = build_qss(liquidglass.glassify_for_qss(self.theme))
+        except Exception:
+            qss = build_qss(self.theme)
         # Apply at BOTH levels: on the window for its children (as before)
         # and on the application so top-level popups that are not QObject
         # children of the window — QTipLabel tooltips above all — inherit
@@ -2846,56 +3007,70 @@ class MainWindow(QMainWindow):
                 break
 
     def _on_rail_clicked(self, key: str):
-        # Rail exclusivity: only the active nav button stays checked.
-        # setChecked alone doesn't always repaint the QSS :checked state when
-        # the mouse is still over the old button — force a style refresh.
-        nav = {"library": self.rail.btn_library,
-               "favorites": self.rail.btn_favorites,
-               "albums": self.rail.btn_albums,
-               "stats": self.rail.btn_stats}
+        # Sidebar exclusivity: only the active nav row stays checked.
+        nav = {k: btn for k, btn in getattr(self.rail, "rows", {}).items()}
         for k, btn in nav.items():
             if btn.isChecked() != (k == key):
                 btn.setChecked(k == key)
-                btn.update_icon()
+                btn._refresh()
                 btn.style().unpolish(btn)
                 btn.style().polish(btn)
-        if key == "library":
+        if key == "home":
+            self.current_view = View.HOME
+            self.stack.setCurrentIndex(PAGE_HOME)
+            self.page_title.setText("Home")
+            self._refresh_home()
+        elif key == "search":
+            self.current_view = View.SEARCH
+            self.stack.setCurrentIndex(PAGE_SEARCH)
+            self.page_title.setText("Search")
+            self.search_page.field.setFocus()
+        elif key == "library":
             self.current_view = View.LIBRARY
-            self.stack.setCurrentIndex(0)
+            self.stack.setCurrentIndex(PAGE_LIBRARY)
             self.page_title.setText("Library")
-            self.rail.btn_library.setChecked(True)
             self._update_count_label()
         elif key == "favorites":
             self.current_view = View.FAVORITES
-            self.stack.setCurrentIndex(1)
+            self.stack.setCurrentIndex(PAGE_FAVORITES)
             self.page_title.setText("Favorites")
-            self.rail.btn_favorites.setChecked(True)
             self._update_count_label()
+        elif key == "downloads":
+            self.current_view = View.DOWNLOADS
+            self.stack.setCurrentIndex(PAGE_DOWNLOADS)
+            self.page_title.setText("Downloads")
+            self.downloads_page.refresh()
         elif key == "refresh":
             self._on_refresh()
         elif key == "addfolder":
             self._on_add_folder()
         elif key == "theme":
-            self._show_theme_picker()
+            # v3: the brush button opens Appearance settings (Liquid Glass
+            # replaces the 12-theme picker as the primary system).
+            self._show_settings()
         elif key == "settings":
             self._show_settings()
         elif key == "albums":
-            self.current_view = View.LIBRARY
+            self.current_view = View.ALBUMS
             self.page_title.setText("Albums")
-            self.rail.btn_albums.setChecked(True)
-            self.stack.setCurrentIndex(2)
+            self.stack.setCurrentIndex(PAGE_ALBUMS)
             # Grid builds from the tag cache instantly; untagged tracks are
             # grouped by the background worker (spinner until done).
             self._rebuild_albums_grid()
         elif key == "stats":
-            self.stack.setCurrentIndex(3)
+            self.current_view = View.STATS
+            self.stack.setCurrentIndex(PAGE_STATS)
             self.page_title.setText("Listening Stats")
-            self.rail.btn_stats.setChecked(True)
             self._refresh_stats_view()
         elif key == "playlists":
             self._show_playlists()
         elif key == "mini":
             self._toggle_mini_player()
+        # keep the sidebar playlist badge in sync after playlist changes
+        try:
+            self.rail.set_playlists(list(self.playlists))
+        except Exception:
+            pass
 
     def _show_playlists(self):
         try:
@@ -2915,7 +3090,8 @@ class MainWindow(QMainWindow):
         self.theme_popup.theme_selected.connect(self._on_theme_selected)
         # Anchor near the theme button but clamp inside the available
         # screen area so the popup never spills off-monitor.
-        btn = self.rail.btn_theme
+        btn = self.rail.rows.get("mini", None) or next(iter(
+            self.rail.rows.values()))
         btn_pos = btn.mapToGlobal(QPoint(0, 0))
         screen_geo = QApplication.screenAt(
             QPoint(btn_pos.x() + btn.width() // 2,
@@ -3147,8 +3323,8 @@ class MainWindow(QMainWindow):
         self.scan_status_label.setVisible(True)
         self.scan_progress.setValue(0)
         self.scan_progress.setVisible(True)
-        self.rail.btn_add.setEnabled(False)
-        self.rail.btn_refresh.setEnabled(False)  # no double-queue scans
+        self.rail.rows["addfolder"].setEnabled(False)
+        self.rail.rows["refresh"].setEnabled(False)  # no double-queue scans
         self._last_scan_folders = list(folders)
         self.scanner = FolderScanner(folders, self)
         self.scanner.progress.connect(self._on_scan_progress)
@@ -3193,8 +3369,8 @@ class MainWindow(QMainWindow):
         self.favorites = {p for p in self.favorites if _keep(p)}
         self.scan_progress.setVisible(False)
         self.scan_status_label.setVisible(False)
-        self.rail.btn_add.setEnabled(True)
-        self.rail.btn_refresh.setEnabled(True)
+        self.rail.rows["addfolder"].setEnabled(True)
+        self.rail.rows["refresh"].setEnabled(True)
         self._rebuild_library_list(rebuild_tree=True)
         self._rebuild_favorites_list()
         self._update_count_label()
@@ -3740,6 +3916,28 @@ class MainWindow(QMainWindow):
                 item.setData(Qt.ItemDataRole.UserRole + 2, bool(is_playing))
             lst.viewport().update()
 
+    def _play_track_next(self, path):
+        """Insert one track right after the currently playing index
+        (the queue-manipulation action the old QueuePanel advertised but
+        never wired — AUDIT finding #5)."""
+        if path not in self.current_playlist:
+            idx = self.current_index + 1
+            self.current_playlist.insert(idx, path)
+            self._show_toast("Playing next")
+        elif self.current_playlist.index(path) != self.current_index:
+            self.current_playlist.remove(path)
+            idx = self.current_index + 1
+            self.current_playlist.insert(idx, path)
+            self._show_toast("Playing next")
+
+    def _queue_track(self, path):
+        """Append a track to the end of the active queue."""
+        if path in self.current_playlist:
+            self._show_toast("Already in queue")
+            return
+        self.current_playlist.append(path)
+        self._show_toast("Added to queue")
+
     def _on_context_menu(self, pos):
         lst = self.library_list if self.current_view == View.LIBRARY else self.favorites_list
         item = lst.itemAt(pos)
@@ -3755,6 +3953,14 @@ class MainWindow(QMainWindow):
         act_play.setIcon(QIcon(render_icon(Icon.PLAY, 16, t["gold"], dpr)))
         act_play.triggered.connect(lambda: self._play_track_from_list(path))
         menu.addAction(act_play)
+        act_next = QAction("Play Next", self)
+        act_next.setIcon(QIcon(render_icon(Icon.NEXT, 16, t["gold"], dpr)))
+        act_next.triggered.connect(lambda: self._play_track_next(path))
+        menu.addAction(act_next)
+        act_queue = QAction("Add to Queue", self)
+        act_queue.setIcon(QIcon(render_icon(Icon.QUEUE, 16, t["gold"], dpr)))
+        act_queue.triggered.connect(lambda: self._queue_track(path))
+        menu.addAction(act_queue)
         menu.addSeparator()
         if path in self.favorites:
             act_unfav = QAction("Remove from Favorites", self)
@@ -4216,6 +4422,10 @@ class MainWindow(QMainWindow):
         self.now_artist.setMarqueeText(artist)
         self.player_bar.title_label.setMarqueeText(title)
         self.player_bar.artist_label.setMarqueeText(artist)
+        # v3: local track started -> SMTC metadata + Recently Played
+        self.current_online = None
+        self._note_recently_played(path)
+        self._smtc_update_metadata(title, artist)
         self.player_bar.time_total.setText("0:00")
         self.player_bar.time_current.setText("0:00")
         self.player_bar.seek_slider.setValue(0)
@@ -4239,9 +4449,368 @@ class MainWindow(QMainWindow):
             self.tray_menu_widget.update_now_playing(
                 title, artist, self.player_bar._cover_thumb_pm)
 
+    # ================================================================
+    # v3: ONLINE MUSIC · DOWNLOADS · SMTC · HOME ACTIONS
+    # ================================================================
+
+    def _apply_native_backdrop(self):
+        """Mica/Acrylic window material on Windows 11 22H2+ driven by the
+        Liquid Glass blur setting; opaque fallback everywhere else."""
+        try:
+            prefers_dark = None
+            try:
+                prefers_dark = _os_prefers_dark()
+            except Exception:
+                prefers_dark = True
+            is_dark = self.glass.is_dark(prefers_dark)
+            ok = liquidglass.apply_native_backdrop(self, self.glass, is_dark)
+            log.info(f"native window material: {'applied' if ok else 'fallback'}")
+            return ok
+        except Exception as e:
+            log.debug(f"native backdrop failed: {e}")
+            return False
+
+    def _init_v3_systems(self):
+        """Start the v3 subsystems once the UI exists: download manager,
+        Windows SMTC media controls, search history, home model."""
+        # --- downloads (one-time folder, queue, library integration) ---
+        try:
+            folder = self.download_folder or str(self._default_download_dir())
+            self.download_manager = dl_mod.DownloadManager(Path(folder))
+            self.download_manager.file_added.connect(self._on_download_completed)
+            self.download_manager.job_failed.connect(
+                lambda job: self._show_toast(
+                    f"Download failed: {job.title}", error=True, ms=4000))
+            self.downloads_page.set_manager(self.download_manager)
+            self.downloads_page.set_folder(Path(folder))
+            self.downloads_page.set_completed(self.downloads_history)
+        except Exception as e:
+            log.warning(f"download manager init failed: {e}")
+        # --- Windows media controls (SMTC) — best effort, optional winrt ---
+        try:
+            self._smtc = smtc.SystemMediaControls(self, enabled=True)
+            self._smtc.play_pause_requested.connect(self._on_play_pause)
+            self._smtc.next_requested.connect(self._on_next)
+            self._smtc.prev_requested.connect(self._on_prev)
+        except Exception as e:
+            log.warning(f"SMTC init failed (non-fatal): {e}")
+        # --- search history ---
+        self.search_page.set_history(self.search_history)
+        # --- home model ---
+        self._refresh_home()
+
+    def _default_download_dir(self):
+        try:
+            from PyQt6.QtCore import QStandardPaths
+            music = QStandardPaths.writableLocation(
+                QStandardPaths.StandardLocation.MusicLocation)
+            if music:
+                return Path(music) / "GoldenMusic"
+        except Exception:
+            pass
+        return Path.home() / "Music" / "GoldenMusic"
+
+    # ------------------------------------------------------------------
+    # Online playback (ONE engine: AudioBackend.play_url streams)
+    # ------------------------------------------------------------------
+    def _play_online_track(self, track):
+        if not getattr(self, "online_enabled", True):
+            self._show_toast("Online music is disabled in Settings")
+            return
+        self._show_toast(f"Streaming “{track.title}”…")
+        w = StreamResolveWorker(self.search_page.provider, track)
+        w.resolved.connect(self._on_stream_resolved)
+        w.failed.connect(self._on_stream_failed)
+        w.start()
+        self._resolve_worker = w
+
+    def _on_stream_resolved(self, track):
+        if not self.audio.play_url(track.stream_url):
+            self._show_toast("Stream failed to start", error=True, ms=4000)
+            return
+        self.current_online = track
+        title = track.title or "Unknown title"
+        artist = track.artist or "Unknown artist"
+        # stop local-track bookkeeping from leaking into the stream
+        self.current_track = None
+        self._finalize_listen_credit()
+        self.now_title.setMarqueeText(title)
+        self.now_artist.setMarqueeText(artist)
+        self.player_bar.title_label.setMarqueeText(title)
+        self.player_bar.artist_label.setMarqueeText(artist)
+        self.player_bar.time_total.setText("0:00")
+        self.player_bar.time_current.setText("0:00")
+        self.player_bar.seek_slider.setValue(0)
+        self.player_bar.update_like_button(False)
+        self.player_bar.update_shuffle_button(False)
+        self._highlight_playing_in_lists()
+        self._smtc_update_metadata(title, artist)
+        self._load_online_artwork(track)
+        if self.mini_player and self.mini_player.isVisible():
+            self.mini_player.update_track(title, artist, None)
+        if getattr(self, "tray_menu_widget", None) is not None:
+            self.tray_menu_widget.update_now_playing(title, artist, None)
+
+    def _on_stream_failed(self, track, err):
+        self._show_toast(f"Stream failed: {err}", error=True, ms=4000)
+        log.warning(f"stream resolve failed: {track.title}: {err}")
+
+    def _load_online_artwork(self, track):
+        provider = self.search_page.provider
+        w = FnWorker(lambda: provider.artwork(track), self)
+        w.done.connect(self._on_online_artwork)
+        w.start()
+        self._online_art_worker = w
+
+    def _on_online_artwork(self, data):
+        if data:
+            from PyQt6.QtGui import QPixmap
+            pm = QPixmap()
+            if pm.loadFromData(data):
+                self.cover_label.set_cover(pm)
+                self.fav_cover.set_cover(pm)
+                self.player_bar.set_cover_thumb(pm)
+                if self.mini_player and self.mini_player.isVisible():
+                    self.mini_player.update_track(
+                        self.player_bar.title_label.text(),
+                        self.player_bar.artist_label.text(), pm)
+                # Artwork-derived accent (Liquid Glass)
+                if self.glass.accent_from_art:
+                    self._apply_artwork_accent(pm)
+
+    def _apply_artwork_accent(self, pm):
+        try:
+            accent = liquidglass.accent_from_pixmap(pm)
+            if accent and accent != self.glass.accent:
+                self.glass.accent = accent
+                self._apply_theme()
+                self._save_config_debounced()
+        except Exception as e:
+            log.debug(f"artwork accent failed: {e}")
+
+    # ------------------------------------------------------------------
+    # Downloads: one-time folder + queue + library integration
+    # ------------------------------------------------------------------
+    def _choose_download_folder(self):
+        start = self.download_folder or str(self._default_download_dir())
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Choose the download folder — used automatically for every "
+            "future download (change it later in Settings)",
+            start)
+        if not folder:
+            return
+        self.download_folder = folder
+        if self.download_manager is not None:
+            self.download_manager.set_folder(Path(folder))
+        self.downloads_page.set_folder(Path(folder))
+        self._save_config_debounced()
+        self._show_toast(f"Downloads will always go to {folder}")
+
+    def _open_download_folder(self):
+        folder = self.download_folder or str(self._default_download_dir())
+        try:
+            from PyQt6.QtGui import QDesktopServices
+            from PyQt6.QtCore import QUrl
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+        except Exception as e:
+            log.warning(f"open folder failed: {e}")
+
+    def _download_online_track(self, track):
+        if not getattr(track, "downloads_allowed", True):
+            self._show_toast("This source does not permit downloads")
+            return
+        if not self.download_folder:
+            # One-time folder configuration, then retry the download once
+            # the folder is chosen.
+            self._choose_download_folder()
+            if not self.download_folder:
+                return
+        self._show_toast(f"Downloading “{track.title}”…")
+        w = StreamResolveWorker(self.search_page.provider, track)
+        w.resolved.connect(self._on_download_resolved)
+        w.start()
+        self._download_resolve_worker = w
+
+    def _on_download_resolved(self, track):
+        try:
+            self.download_manager.download_track(track)
+            self._show_toast(f"Queued: {track.title}")
+        except PermissionError as e:
+            self._show_toast(str(e), error=True, ms=4000)
+        except Exception as e:
+            self._show_toast(f"Download failed: {e}", error=True, ms=4000)
+
+    def _on_download_completed(self, path, job):
+        """Library integration: the downloaded file joins the EXISTING
+        local library exactly once (no duplicate indexing), becomes
+        searchable/offline-playable and shows on Home."""
+        try:
+            self.download_manager.record_completed(job)
+            path = str(path)
+            if path not in self.library:
+                self.library.append(path)
+                try:
+                    title, artist = extract_title_artist(path)
+                    self._tag_cache[path] = (title, artist)
+                except Exception:
+                    pass
+                self._rebuild_library_list()
+                self._update_count_label()
+            self.downloads_history = self.download_manager.history()
+            self.downloads_page.set_completed(self.downloads_history)
+            self._refresh_home()
+            self._save_config_debounced()
+            self._show_toast(f"Downloaded: {job.title}")
+        except Exception as e:
+            log.warning(f"download completion failed: {e}")
+
+    # ------------------------------------------------------------------
+    # SMTC helpers
+    # ------------------------------------------------------------------
+    def _smtc_update_metadata(self, title, artist, thumb=None):
+        smtc_controls = getattr(self, "_smtc", None)
+        if smtc_controls is None:
+            return
+        try:
+            thumb_png = None
+            if thumb is not None and not thumb.isNull():
+                from PyQt6.QtCore import QBuffer
+                ba = QBuffer()
+                ba.open(QBuffer.OpenModeFlag.WriteOnly)
+                thumb.save(ba, "PNG")
+                thumb_png = bytes(ba.data())
+            smtc_controls.update_metadata(smtc.MediaMetadata(
+                title=title, artist=artist,
+                position_ms=self.audio.position(),
+                duration_ms=self.audio.duration(),
+                thumbnail_png=thumb_png))
+            smtc_controls.set_status_playing(
+                self.audio.state() == AudioBackend.STATE_PLAYING)
+        except Exception as e:
+            log.debug(f"smtc metadata update failed: {e}")
+
+    # ------------------------------------------------------------------
+    # Home page actions (local library intents)
+    # ------------------------------------------------------------------
+    def _home_play(self, item):
+        tracks = [p for p in item.paths if os.path.exists(p)]
+        if tracks:
+            self._play_from_list(tracks, 0, view=self.current_view)
+
+    def _home_play_next(self, item):
+        tracks = [p for p in item.paths if os.path.exists(p)]
+        if not tracks:
+            return
+        idx = self.current_index + 1
+        self.current_playlist[idx:idx] = tracks
+        if self.current_index < 0:
+            self._play_from_list(self.current_playlist, 0,
+                                 view=self.current_view)
+        else:
+            self._show_toast(f"Playing next: {item.title}")
+
+    def _home_add_queue(self, item):
+        tracks = [p for p in item.paths if os.path.exists(p)]
+        if not tracks:
+            return
+        if not self.current_playlist:
+            self._play_from_list(tracks, 0, view=self.current_view)
+        else:
+            self.current_playlist.extend(tracks)
+            self._show_toast(f"Added to queue: {item.title}")
+
+    def _home_favorite(self, item):
+        if item.paths:
+            path = item.paths[0]
+            if path not in self.favorites:
+                self._toggle_favorite(path)
+
+    def _home_open_artist(self, item):
+        artist = item.title
+        self._on_rail_clicked("library")
+        self.search_edit.setText(artist)
+        self._on_search_changed(artist)
+
+    def _home_track_info(self, item):
+        if item.paths:
+            self._show_track_properties(item.paths[0])
+
+    def _home_see_all(self, key):
+        target = {"albums": "albums", "favorites": "favorites",
+                  "playlists": "playlists"}.get(key)
+        if target:
+            self._on_rail_clicked(target)
+
+    def _refresh_home(self):
+        """Feed the Home page from REAL library state."""
+        try:
+            lib = [p for p in self.library if os.path.exists(p)]
+            tags = {}
+            for p in lib:
+                cached = self._tag_cache.get(p)
+                if isinstance(cached, (tuple, list)) and len(cached) >= 2:
+                    tags[p] = {"title": cached[0], "artist": cached[1],
+                               "album": ""}
+            recently_added = sorted(
+                lib, key=lambda p: os.path.getmtime(p), reverse=True)[:10]
+            downloads = [r.get("dest_path") or "" for r in
+                         self.downloads_history][:10]
+            self.home_page.set_model({
+                "library": lib,
+                "tags": tags,
+                "recently_played": list(self.recently_played),
+                "recently_added": recently_added,
+                "favorites": {p for p in self.favorites if os.path.exists(p)},
+                "playlists": dict(self.playlists),
+                "recently_downloaded": [p for p in downloads if p],
+            })
+        except Exception as e:
+            log.warning(f"home refresh failed: {e}")
+
+    # ------------------------------------------------------------------
+    # Recently played (persisted, cap 30, no consecutive duplicates)
+    # ------------------------------------------------------------------
+    _RECENT_MAX = 30
+
+    def _note_recently_played(self, path):
+        if not path:
+            return
+        if self.recently_played and self.recently_played[0] == path:
+            return
+        self.recently_played.insert(0, path)
+        del self.recently_played[self._RECENT_MAX:]
+        self._save_config_debounced()
+        # Home stays cheap: only rebuild when it is the visible page
+        if self.stack.currentIndex() == PAGE_HOME:
+            self._refresh_home()
+
+    # ------------------------------------------------------------------
+    # Online search history
+    # ------------------------------------------------------------------
+    def _on_search_query(self, query):
+        q = (query or "").strip()
+        if not q:
+            return
+        if q in self.search_history:
+            self.search_history.remove(q)
+        self.search_history.insert(0, q)
+        self.search_history = online_mod.sanitize_history(self.search_history)
+        self.search_page.set_history(self.search_history)
+        self._save_config_debounced()
+
     def _on_track_finished(self):
         """Called when a track finishes naturally."""
         self._finalize_listen_credit()
+        # Mixed local/online queue: a finished ONLINE track first drains the
+        # online queue; when it runs empty playback falls back to the local
+        # playlist logic below.
+        if getattr(self, "current_online", None) is not None:
+            if self.online_queue:
+                nxt = self.online_queue.pop(0)
+                self._play_online_track(nxt)
+                return
+            self.current_online = None
         self._on_next()
 
     def _finalize_listen_credit(self):
@@ -5016,6 +5585,15 @@ class MainWindow(QMainWindow):
         if getattr(self, "tray_menu_widget", None) is not None:
             self.tray_menu_widget.update_play_state(
                 state == AudioBackend.STATE_PLAYING)
+        # v3: Windows media controls (SMTC) status mirror
+        smtc_controls = getattr(self, "_smtc", None)
+        if smtc_controls is not None:
+            if state == AudioBackend.STATE_PLAYING:
+                smtc_controls.set_status_playing(True)
+            elif state == AudioBackend.STATE_PAUSED:
+                smtc_controls.set_status_playing(False)
+            elif state == AudioBackend.STATE_STOPPED:
+                smtc_controls.set_status_stopped()
 
     def _on_audio_error(self, msg):
         # A corrupt / unsupported file must never stall the player on a dead
@@ -5357,7 +5935,17 @@ class MainWindow(QMainWindow):
             pass
         cfg = {
             "version": APP_VERSION,
+            # v3 primary appearance system (the legacy 12-theme key is kept
+            # in sync below so rollback builds still boot with a look)
+            "liquid": self.glass.to_dict() if getattr(self, "glass", None)
+                      else None,
+            "auto_theme": bool(getattr(self, "auto_theme_enabled", False)),
             "theme": self.theme_name,
+            "recently_played": list(getattr(self, "recently_played", []))[:30],
+            "search_history": list(getattr(self, "search_history", []))[:12],
+            "download_folder": str(getattr(self, "download_folder", "") or ""),
+            "downloads_history": list(getattr(self, "downloads_history", []))[:200],
+            "online_enabled": bool(getattr(self, "online_enabled", True)),
             "library": lib,
             "favorites": favs,
             "added_folders": folders,
@@ -5411,6 +5999,28 @@ class MainWindow(QMainWindow):
         if not ok:
             return
 
+        # --- v3 keys: Liquid Glass appearance (with legacy migration) ---
+        liquid_cfg = cfg.get("liquid")
+        if isinstance(liquid_cfg, dict):
+            self.glass = liquidglass.GlassSettings.from_dict(liquid_cfg)
+        elif cfg.get("theme"):
+            self.glass, _mig = liquidglass.migrate_legacy_config(cfg)
+            log.info("liquid glass: migrated legacy theme "
+                     f"{_mig.get('legacy_theme')} -> accent "
+                     f"{_mig.get('migrated_accent')}")
+        if "auto_theme" in cfg:
+            self.auto_theme_enabled = bool(cfg.get("auto_theme", False))
+            if self.auto_theme_enabled:
+                self.glass.mode = "system"
+        self.recently_played = [str(x) for x in cfg.get("recently_played", [])
+                                if isinstance(x, str)][:30]
+        self.search_history = online_mod.sanitize_history(
+            cfg.get("search_history", []))
+        self.download_folder = str(cfg.get("download_folder", "") or "")
+        self.downloads_history = [r for r in
+                                  cfg.get("downloads_history", [])
+                                  if isinstance(r, dict)][:200]
+        self.online_enabled = bool(cfg.get("online_enabled", True))
         self.theme_name = cfg.get("theme", "royal_gold")
         self.library = cfg.get("library", [])
         self.favorites = set(cfg.get("favorites", []))
@@ -5456,8 +6066,11 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         self._apply_theme()
-        self.library = [p for p in self.library if os.path.exists(p)]
-        self.favorites = {p for p in self.favorites if os.path.exists(p)}
+        # AUDIT FIX (High: offline-drive data loss): entries are NEVER pruned
+        # from the persisted library on load — an unmounted drive must not
+        # erase the user's music list. Missing files are simply filtered out
+        # of the VISIBLE lists below; the moment the drive returns, every
+        # track reappears (verified by test_offline_drive_retention).
         self._rebuild_library_list()
         self._rebuild_favorites_list()
         self._update_count_label()
@@ -5525,8 +6138,29 @@ class MainWindow(QMainWindow):
         self.scan_status_label.setVisible(False)
         self.scan_progress.setVisible(False)
 
-        # Default to Royal Gold for new installs (v2.0.0 psychology
-        # suite); migrate pre-2.0 theme ids so users keep their vibe.
+        # --- v3 appearance (Liquid Glass) — the async path is the one that
+        # actually runs at boot; keep in sync with _load_config (sync path).
+        liquid_cfg = cfg.get("liquid")
+        if isinstance(liquid_cfg, dict):
+            self.glass = liquidglass.GlassSettings.from_dict(liquid_cfg)
+        elif cfg.get("theme"):
+            self.glass, _mig = liquidglass.migrate_legacy_config(cfg)
+            log.info("liquid glass: migrated legacy theme "
+                     f"{_mig.get('legacy_theme')} -> accent "
+                     f"{_mig.get('migrated_accent')}")
+        self.auto_theme_enabled = bool(cfg.get("auto_theme", False))
+        if self.auto_theme_enabled:
+            self.glass.mode = "system"
+        self.recently_played = [str(x) for x in cfg.get("recently_played", [])
+                                if isinstance(x, str)][:30]
+        self.search_history = online_mod.sanitize_history(
+            cfg.get("search_history", []))
+        self.download_folder = str(cfg.get("download_folder", "") or "")
+        self.downloads_history = [r for r in
+                                  cfg.get("downloads_history", [])
+                                  if isinstance(r, dict)][:200]
+        self.online_enabled = bool(cfg.get("online_enabled", True))
+        # keep the legacy theme name in sync for rollback compatibility
         self.theme_name = Theme.normalize(cfg.get("theme", Theme.DEFAULT_NAME))
         if self.theme_name not in Theme.names():
             self.theme_name = Theme.DEFAULT_NAME
@@ -5581,6 +6215,15 @@ class MainWindow(QMainWindow):
             cfg.get("sleep_timer_minutes", 30), 30, 1, 480)
         if bool(cfg.get("sleep_timer_active", False)):
             self.start_sleep_timer(self.sleep_timer_minutes)
+        # v3: propagate loaded glass settings into the running subsystems
+        try:
+            if self.download_manager is not None and self.download_folder:
+                self.download_manager.set_folder(Path(self.download_folder))
+                self.downloads_page.set_folder(Path(self.download_folder))
+            self.downloads_page.set_completed(self.downloads_history)
+            self.search_page.set_history(self.search_history)
+        except Exception as e:
+            log.debug(f"v3 post-load sync failed: {e}")
         if hasattr(self, "sort_combo"):
             idx = self.sort_combo.findData(sm)
             if idx >= 0:
@@ -5593,9 +6236,10 @@ class MainWindow(QMainWindow):
                 pass
         self._apply_theme()
 
-        # Filter missing files (fast — os.path.exists)
-        self.library = [p for p in self.library if os.path.exists(p)]
-        self.favorites = {p for p in self.favorites if os.path.exists(p)}
+        # AUDIT FIX (offline-drive retention): same rule as the sync loader —
+        # persisted entries survive offline drives and REMAIN VISIBLE (so the
+        # user still sees their collection); playing a missing file simply
+        # raises the existing graceful audio-error skip.
         # The stats seed at __init__ ran before added_folders was known —
         # refresh moved-file search roots now that folders are populated.
         try:
@@ -5869,13 +6513,36 @@ def main():
         # Single-instance: forward to the running window instead of
         # launching a copy (files are handed over too).
         if not _acquire_single_instance_lock():
-            if _forward_to_running(argv_files):
-                sys.exit(0)
-            # Mutex held but the socket is unreachable — stale lock from a
-            # crashed/killed run; start normally rather than dead-locking
-            # the user out of their player.
-            log.warning("single-instance lock held but IPC is unreachable "
-                        "— starting anyway")
+            # Forward to the running instance with bounded retries (the
+            # first attempt can lose a race with the owner's IPC server
+            # binding during ITS startup).
+            for attempt in range(3):
+                if _forward_to_running(argv_files):
+                    sys.exit(0)
+                time.sleep(0.3)
+            # AUDIT FIX (Medium: double-instance race): the mutex is held by
+            # a LIVE process whose IPC server is unreachable. Starting a
+            # second instance anyway produced two GUIs both writing
+            # config.json (silent data corruption). Now: refuse with a
+            # clear message. A genuinely dead owner releases the mutex at
+            # process exit, so this branch never dead-locks a healthy user
+            # out of the app (verified by test_open_with).
+            log.error("another Golden Music instance is running but did "
+                      "not answer; refusing a second instance to protect "
+                      "config.json")
+            try:
+                from PyQt6.QtWidgets import QMessageBox as _MB
+                from PyQt6.QtCore import Qt as _Qt
+            except Exception:
+                _MB = None
+            if _MB is not None:
+                app0 = QApplication.instance() or QApplication(
+                    [APP_NAME] + sys.argv[:1])
+                _MB.critical(
+                    None, APP_NAME,
+                    "Golden Music is already running but is not responding.\n\n"
+                    "Please close it (check the tray area) and try again.")
+            sys.exit(1)
     QApplication.setStyle(QStyleFactory.create("Fusion"))
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
@@ -5890,7 +6557,12 @@ def main():
     w._updated_flag = updated_flag
     _install_crash_guard(app)
     w.show()
-    _enable_windows_glass(w)
+    # v3: Nuvx-style native window material (Mica/Acrylic) driven by the
+    # Liquid Glass blur setting, with automatic opaque fallback.
+    try:
+        w._apply_native_backdrop()
+    except Exception as e:
+        log.debug(f"native backdrop skipped: {e}")
     if QSystemTrayIcon.isSystemTrayAvailable():
         w.tray.show()
     w._handle_update_startup()
@@ -5907,10 +6579,21 @@ def main():
         # joins every worker first.
         from PyQt6.QtCore import QTimer
         w._smoke = True
+        reg = {}
+        try:
+            reg = winreg_apps.registration_status()
+        except Exception as e:
+            reg = {"detail": f"status error: {e}"}
         print(f"SMOKE OK: window visible={w.isVisible()}, "
               f"theme={getattr(w, 'theme', {}).get('name', '?')}, "
               f"tracks={len(getattr(w, 'library', []))}, "
               f"rate_popup_icons=6")
+        print(f"SMOKE v3: pages={w.stack.count()} "
+              f"(home/search/library/favorites/albums/stats/downloads), "
+              f"glass={w.glass.mode}/{w.glass.accent}, "
+              f"formats={formatcaps.probe_supported_exts()}, "
+              f"smtc_available={smtc.SystemMediaControls.available()}, "
+              f"winreg={reg}")
 
         def _smoke_quit():
             try:
