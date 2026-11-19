@@ -373,7 +373,7 @@ class DownloadWorker(QThread):
         last_err = None
         for attempt in range(MAX_RETRIES + 1):
             try:
-                with urllib.request.urlopen(req, timeout=20) as r:  # noqa: S310
+                with urllib.request.urlopen(req, timeout=20) as r:  # nosec B310 (scheme audited above)
                     if resume_from and r.status not in (HTTP_PARTIAL, HTTP_OK):
                         raise RuntimeError("server ignored resume range")
                     total = r.headers.get("Content-Length")

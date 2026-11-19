@@ -203,7 +203,7 @@ class InternetArchiveProvider(OnlineProvider):
             try:
                 req = urllib.request.Request(   # noqa: S310 (https enforced)
                     url, headers={"User-Agent": self.UA})
-                with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
+                with urllib.request.urlopen(req, timeout=timeout) as r:  # nosec B310 (https enforced)
                     if r.status != HTTP_OK:
                         raise urllib.error.HTTPError(
                             url, r.status, "non-200", None, None)
