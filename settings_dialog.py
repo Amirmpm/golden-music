@@ -24,7 +24,7 @@ class SettingsDialog(QDialog):
         self.main_window = main_window
         self.setWindowTitle(f"{APP_NAME} Settings")
         self.setModal(True)
-        self.setMinimumWidth(480)
+        self.setMinimumWidth(640)
         self.theme = main_window.theme
 
         layout = QVBoxLayout(self)
@@ -75,25 +75,24 @@ class SettingsDialog(QDialog):
 
     def _apply_styles(self):
         t = self.theme
-        is_dark = t.get('is_dark')
         # Readable accent for group-box titles on BOTH color families:
         # light themes use a dark "ink" accent (readable on white), dark
         # themes use the bright accent (readable on near-black).
-        # (gold_light is tuned for dark surfaces only.)
-        title_col = t['gold']
+        # Nuvx settings: headings are neutral text — gold is state-only.
+        title_col = t['text']
         self.setStyleSheet(f"""
             QDialog {{ background: {t['window_bg']}; color: {t['text']}; }}
-            QWidget {{ color: {t['text']}; font-size: 13px; }}
+            QWidget {{ color: {t['text']}; font-size: 13.5px; }}
             QTabWidget {{ background: {t['window_bg']}; }}
             QTabWidget::pane {{ border: 1px solid {t['border']}; border-radius: 8px; background: {t['panel_bg']}; }}
             QTabBar {{ background: {t['window_bg']}; }}
-            QTabBar::tab {{ background: {t['panel_bg_2']}; color: {t['muted']}; padding: 8px 16px; border-radius: 6px; margin: 2px; font-size: 13px; }}
-            QTabBar::tab:selected {{ background: {t['gold']}; color: {'#ffffff' if is_dark else t['window_bg']}; font-weight: 600; }}
-            QTabBar::tab:hover {{ color: {t['gold_light']}; }}
+            QTabBar::tab {{ background: transparent; color: {t['muted']}; padding: 8px 16px; border-radius: 7px; margin: 2px; font-size: 13.5px; border: 1px solid transparent; }}
+            QTabBar::tab:selected {{ background: {t['active']}; color: {t['text']}; font-weight: 600; border: 1px solid {t['border']}; }}
+            QTabBar::tab:hover {{ color: {t['text']}; background: {t['active']}; }}
             QScrollArea {{ background: transparent; }}
             QScrollArea > QWidget > QWidget {{ background: transparent; }}
             QGroupBox {{
-                color: {title_col}; font-weight: 600; font-size: 13px;
+                color: {title_col}; font-weight: 600; font-size: 13.5px;
                 border: 1px solid {t['border']}; border-radius: 8px;
                 margin-top: 12px; padding-top: 12px;
                 background: {t['panel_bg']};
@@ -106,13 +105,14 @@ class SettingsDialog(QDialog):
             QLabel {{ color: {t['text']}; background: transparent; }}
             QPushButton {{
                 background: {t['panel_bg_2']}; color: {t['text']};
-                border: 1px solid {t['border']}; border-radius: 6px;
+                border: 1px solid {t['border']}; border-radius: 17px;
                 padding: 8px 16px; font-size: 13px;
+                min-height: 34px;
             }}
-            QPushButton:hover {{ background: {t['active']}; border-color: {t['gold']}; color: {t['gold_light']}; }}
+            QPushButton:hover {{ background: {t['active']}; border-color: {t['border']}; color: {t['text']}; }}
             QPushButton:disabled {{ color: {t['muted']}; }}
-            QPushButton#GoldBtn {{ background: {t['gold']}; color: {'#ffffff' if not is_dark else t['window_bg']}; font-weight: 600; border: none; }}
-            QPushButton#GoldBtn:hover {{ background: {t['gold_light']}; color: {'#ffffff' if not is_dark else t['window_bg']}; }}
+            QPushButton#GoldBtn {{ background: {t['text']}; color: {t['window_bg']}; font-weight: 600; border: none; }}
+            QPushButton#GoldBtn:hover {{ background: {t['muted']}; color: {t['window_bg']}; }}
             QPushButton#DangerBtn {{ background: transparent; color: #e05050; border: 1px solid #603030; }}
             QPushButton#DangerBtn:hover {{ background: rgba(224, 80, 80, 30); color: #ff7070; }}
             QComboBox {{
@@ -120,18 +120,18 @@ class SettingsDialog(QDialog):
                 border: 1px solid {t['border']}; border-radius: 6px;
                 padding: 6px 10px; min-width: 120px;
             }}
-            QComboBox:hover {{ border-color: {t['gold']}; }}
+            QComboBox:hover {{ border-color: {t['border']}; background: {t['active']}; }}
             QComboBox:disabled {{ color: {t['muted']}; background: {t['panel_bg']}; }}
             QComboBox QAbstractItemView {{
                 background: {t['panel_bg']}; color: {t['text']};
-                selection-background-color: {t['active']}; selection-color: {t['gold_light']};
+                selection-background-color: {t['active']}; selection-color: {t['text']};
                 border: 1px solid {t['border']}; outline: 0;
             }}
             QCheckBox {{ color: {t['text']}; spacing: 8px; background: transparent; }}
-            QCheckBox:hover {{ color: {t['gold_light']}; }}
+            QCheckBox:hover {{ color: {t['text']}; }}
             QCheckBox:disabled {{ color: {t['muted']}; }}
             QCheckBox::indicator {{ width: 18px; height: 18px; border-radius: 4px; border: 1px solid {t['border']}; background: {t['panel_bg_2']}; }}
-            QCheckBox::indicator:hover {{ border-color: {t['gold']}; }}
+            QCheckBox::indicator:hover {{ border-color: {t['border']}; }}
             QCheckBox::indicator:checked {{ background: {t['gold']}; border-color: {t['gold']}; }}
             QSpinBox {{
                 background: {t['panel_bg_2']}; color: {t['text']};
@@ -146,7 +146,7 @@ class SettingsDialog(QDialog):
             }}
             QScrollBar:vertical {{ background: {t['panel_bg']}; width: 10px; }}
             QScrollBar::handle:vertical {{ background: {t['border']}; border-radius: 5px; min-height: 30px; }}
-            QScrollBar::handle:vertical:hover {{ background: {t['gold_deep']}; }}
+            QScrollBar::handle:vertical:hover {{ background: {t['muted']}; }}
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
         """)
 
@@ -1083,3 +1083,135 @@ class SettingsDialog(QDialog):
 
         self.main_window._save_config()
         self.accept()
+
+    def _on_ok(self):
+        # Apply appearance — Liquid Glass values were applied live as the
+        # controls changed; make sure the final state is synced + applied.
+        self._sync_glass_from_controls()
+        self.main_window._apply_theme()
+        self.main_window.auto_theme_enabled = self.auto_theme_cb.isChecked()
+        self.main_window._apply_auto_theme_setting()
+        self.main_window._toast_enabled = self.toast_cb.isChecked()
+        self.main_window.taskbar_close_to_tray = self.tray_min_cb.isChecked()
+        self.main_window.updates_enabled = self.updates_cb.isChecked()
+
+        # Apply playback effects
+        self.main_window._last_volume = self.default_vol_spin.value()
+        fx = getattr(self.main_window, 'fx', None)
+        if fx:
+            fx.enabled_fade = self.fade_cb.isChecked()
+            fx.fade_ms = self.fade_spin.value()
+        mw = self.main_window
+        mw.player_bar.ab_btn.setVisible(self.ab_cb.isChecked())
+        mw.player_bar.rate_btn.setVisible(self.rate_cb.isChecked())
+        mw.player_bar.lyrics_btn.setVisible(self.lyrics_cb.isChecked())
+        mw.lyrics_online_enabled = self.lyrics_online_cb.isChecked()
+        # v3.1: lyrics text size + timing offset (applied live to both the
+        # side panel and the fullscreen lyrics)
+        mw.lyrics_font_scale = float(self.lyr_scale_combo.currentData() or 1.0)
+        mw.lyrics_offset_ms = self.lyr_offset_spin.value()
+        try:
+            lp = getattr(mw, "_lyrics_panel", None)
+            if lp is not None:
+                lp._restyle_lines()
+            fs = getattr(mw, "_fullscreen_player", None)
+            if fs is not None:
+                fs._restyle_lines()
+        except Exception:
+            pass
+        # v3.1: custom proxy (validated — invalid URLs are refused here,
+        # keeping the previously-working setting)
+        proxy = self.proxy_edit.text().strip()
+        if proxy:
+            try:
+                import online as _online_mod
+                _online_mod.set_proxy(proxy)
+                mw.proxy_url = proxy
+            except ValueError as e:
+                QMessageBox.warning(
+                    self, APP_NAME, f"Proxy not applied:\n{e}\n\n"
+                    "Keeping the previous proxy setting.")
+        else:
+            try:
+                import online as _online_mod
+                _online_mod.set_proxy("")
+            except Exception:
+                pass
+            mw.proxy_url = ""
+        mw.visualizer_enabled = self.viz_cb.isChecked()
+        try:
+            fs = getattr(mw, "_fullscreen_player", None)
+            if fs is not None:
+                fs.visualizer_enabled = mw.visualizer_enabled
+                fs.viz_btn.setChecked(mw.visualizer_enabled)
+        except Exception:
+            pass
+
+        # Audio output device — already applied live on combo change
+        # (_on_output_changed); keep the id in sync and persist it.
+        mw.audio_output_id = self.output_combo.currentData() or ""
+
+        if self.sleep_cb.isChecked():
+            self.main_window.start_sleep_timer(self.sleep_spin.value())
+        else:
+            self.main_window.stop_sleep_timer()
+
+        # Apply library
+        self.main_window.default_folder = self.folder_edit.text()
+        self.main_window.auto_rescan = self.auto_rescan_cb.isChecked()
+        self.main_window.remember_track = self.remember_track_cb.isChecked()
+
+        self.main_window._save_config()
+        self.accept()
+    def _mono_font(self):
+        from PyQt6.QtGui import QFont
+        f = QFont("Consolas")
+        f.setStyleHint(QFont.StyleHint.Monospace)
+        return f
+    def _build_shortcuts_tab(self) -> QWidget:
+        """Dedicated keyboard-shortcuts page (NUVX_SETTINGS_PARITY item
+        53): documents the REAL, live shortcuts — the ones QShortcut and
+        MediaKeyFilter actually install."""
+        from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem, \
+            QHeaderView
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setSpacing(12)
+        intro = QLabel(
+            "These shortcuts are installed by the application itself — "
+            "this page documents the live keymap, it does not (yet) allow "
+            "rebinding.")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+        table = QTableWidget(0, 2)
+        table.setHorizontalHeaderLabels(["Shortcut", "Action"])
+        table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.Stretch)
+        table.verticalHeader().setVisible(False)
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        shortcuts = [
+            ("Space / Enter", "Play / Pause (when no list or input has focus)"),
+            ("Ctrl + ←", "Previous track"),
+            ("Ctrl + →", "Next track"),
+            ("Ctrl + ↑ / Ctrl + ↓", "Volume up / down"),
+            ("← / → (neutral focus)", "Previous / Next track"),
+            ("↑ / ↓ (neutral focus)", "Volume up / down"),
+            ("Ctrl + F", "Focus the search bar"),
+            ("Ctrl + M", "Toggle Mini Player"),
+            ("Ctrl + J", "Jump to the playing track"),
+            ("F11 / F", "Fullscreen player (Esc leaves)"),
+            ("Esc", "Leave the fullscreen player"),
+            ("Media keys", "Play/Pause/Stop/Next/Prev — global (keyboard or "
+                          "headset)"),
+        ]
+        for key, action in shortcuts:
+            r = table.rowCount()
+            table.insertRow(r)
+            k_item = QTableWidgetItem(key)
+            k_item.setFont(self._mono_font())
+            table.setItem(r, 0, k_item)
+            table.setItem(r, 1, QTableWidgetItem(action))
+        layout.addWidget(table, 1)
+        return tab

@@ -16,6 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 DIST = ROOT / "dist" / "GoldenMusic"
+IS_WINDOWS = sys.platform == "win32"
 
 # Files PyInstaller bundles but the app provably never loads (verified by
 # launching the trimmed bundle — see scripts/test_build_smoke.py).
@@ -62,11 +63,30 @@ TRIM_FILES = [
 # Trim a whole directory tree if present (best-effort, never fatal).
 TRIM_DIRS = [
     "_internal/PyQt6/Qt6/qml",
+    "_internal/PyQt6/Qt6/plugins/wayland-shell-integration",
 ]
 
+# Linux-only trims: Qt libs no exercised code path links. NOTE: Qml/
+# Quick MUST STAY — libffmpegmediaplugin.so links them (Qt 6.11 media
+# backend), so removing them kills playback on Linux.
+TRIM_FILES_LINUX = [
+    "_internal/PyQt6/Qt6/lib/libQt6Pdf.so.6",
+    "_internal/PyQt6/Qt6/lib/libQt6WlShellIntegration.so.6",
+    "_internal/PyQt6/Qt6/lib/libQt6EglFSDeviceIntegration.so.6",
+    "_internal/PyQt6/Qt6/plugins/platforms/libqeglfs.so",
+    "_internal/PyQt6/Qt6/plugins/platforminputcontexts/libcomposeplatforminputcontextplugin.so",
+]
+
+# Linux wheels keep symbols in the shared objects; stripping shrinks the
+# bundle by roughly half without touching behaviour.
+STRIP_ON_LINUX = True
+
 # Size cap (MB) for the portable folder — the build FAILS loudly above this
-# instead of silently shipping a bloated bundle.
-SIZE_BUDGET_MB = 115
+# instead of silently shipping a bloated bundle. Linux carries ICU data
+# (31 MB, linked by QtCore), real FFmpeg libs and an un-UPX-able python
+# .so, so its honest floor is ~235 MB; the cap still catches runaway
+# bloat (a leaked Qt/qml tree alone is +60 MB).
+SIZE_BUDGET_MB = 115 if sys.platform == "win32" else 260
 
 
 def run(cmd, **kw):
@@ -87,7 +107,10 @@ def main():
 
     # 3. Trim proven-unused binaries (best-effort: never fail the build)
     saved = 0
-    for rel in TRIM_FILES:
+    trim_list = list(TRIM_FILES)
+    if not IS_WINDOWS:
+        trim_list += TRIM_FILES_LINUX
+    for rel in trim_list:
         f = DIST / rel
         try:
             if f.is_file() or f.is_symlink():
@@ -107,14 +130,32 @@ def main():
         except OSError as e:
             print(f"trim skip dir {rel}: {e}")
 
-    # 4. Smoke test — boot the built exe, fail loudly if it dies early.
-    #    QT_QPA_PLATFORM=offscreen is NOT used here: we want the real
-    #    window path (platforms/qwindows.dll) to load.
-    exe = DIST / "GoldenMusic.exe"
+    # 3b. Linux: strip symbols from the bundled shared objects (the
+    # Windows binary diet is UPX-based; on Linux strip is the tool).
+    if not IS_WINDOWS and STRIP_ON_LINUX and shutil.which("strip"):
+        stripped = 0
+        for f in DIST.rglob("*.so*"):
+            if f.is_file() and f.suffix.startswith(".so"):
+                try:
+                    before = f.stat().st_size
+                    run(["strip", "--strip-unneeded", str(f)])
+                    stripped += before - f.stat().st_size
+                except Exception as e:
+                    print(f"strip skip {f.name}: {e}")
+        print(f"stripped {stripped / 1e6:.1f} MB of symbols")
+
+    # 4. Smoke test — boot the built app, fail loudly if it dies early.
+    #    Windows wants the real window path (platforms/qwindows.dll) to
+    #    load; Linux CI runners are headless, so the offscreen platform is
+    #    the real window path there.
+    exe = DIST / ("GoldenMusic.exe" if IS_WINDOWS else "GoldenMusic")
+    env = {**os.environ}
+    if not IS_WINDOWS:
+        env.setdefault("QT_QPA_PLATFORM", "offscreen")
     print(f"+ smoke: {exe} --smoke")
     t0 = time.time()
     proc = subprocess.run(
-        [str(exe), "--smoke"], cwd=ROOT,
+        [str(exe), "--smoke"], cwd=ROOT, env=env,
         capture_output=True, text=True, timeout=120)
     dt = time.time() - t0
     tail = (proc.stdout + proc.stderr)[-1500:]
@@ -122,7 +163,8 @@ def main():
     if proc.returncode != 0:
         raise SystemExit(f"SMOKE FAILED (exit {proc.returncode}) — see above")
 
-    size_mb = sum(f.stat().st_size for f in DIST.rglob("*") if f.is_file()) / 1e6
+    size_mb = sum(f.stat().st_size for f in DIST.rglob("*")
+                  if f.is_file() and not f.is_symlink()) / 1e6
     print(f"\nBuild OK: {exe}")
     print(f"Total folder size: {size_mb:.1f} MB (trim saved {saved/1e6:.1f} MB)")
     if size_mb > SIZE_BUDGET_MB:

@@ -36,7 +36,7 @@ class TrayIconButton(QPushButton):
             self.setFixedSize(48, 48)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._hover = False
-        self._color = "#d4a85a"
+        self._color = "#f2f0f5"
         self._label_color = "rgba(240, 230, 210, 200)"
         self._apply_base_style()
 
@@ -128,7 +128,7 @@ class TrayMenuWidget(QFrame):
         info_col.setSpacing(2)
         self.track_title = QLabel("No track playing")
         self.track_title.setStyleSheet(
-            f"color: {theme['gold_light']}; font-size: 13px; font-weight: 600;")
+            f"color: {theme['text']}; font-size: 13px; font-weight: 600;")
         self.track_artist = QLabel("—")
         self.track_artist.setStyleSheet(
             f"color: {theme['muted']}; font-size: 11px;")
@@ -192,7 +192,8 @@ class TrayMenuWidget(QFrame):
 
     def _apply_theme(self, theme: dict):
         self.theme = theme
-        accent = theme["gold"]
+        # Neutral icon colour — gold is reserved for real state.
+        accent = theme["text"]
         for btn in [self.btn_prev, self.btn_play, self.btn_next,
                     self.btn_show, self.btn_close, self.btn_quit]:
             btn.set_color(accent)
@@ -200,7 +201,7 @@ class TrayMenuWidget(QFrame):
                 btn.set_label_color(theme["text"])
         # Restyle the header with the active theme colors
         self.track_title.setStyleSheet(
-            f"color: {theme['gold_light']}; font-size: 13px; font-weight: 600;")
+            f"color: {theme['text']}; font-size: 13px; font-weight: 600;")
         self.track_artist.setStyleSheet(
             f"color: {theme['muted']}; font-size: 11px;")
         self.cover_label.setStyleSheet(

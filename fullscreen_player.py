@@ -218,25 +218,25 @@ class FullscreenPlayer(QWidget):
         self.setStyleSheet(f"""
             FullscreenPlayer {{ background: transparent; }}
             QLabel#FS_Title {{
-                color: {t['gold_light']}; font-size: 32px; font-weight: 700;
+                color: {t['text']}; font-size: 32px; font-weight: 700;
                 background: transparent;
             }}
             QLabel#FS_Artist {{
                 color: {t['muted']}; font-size: 17px; background: transparent;
             }}
             QLabel#FS_LyricsTitle {{
-                color: {t['gold_light']}; font-size: 18px; font-weight: 700;
+                color: {t['text']}; font-size: 18px; font-weight: 700;
                 background: transparent;
             }}
             QLabel#FS_Time {{ color: {t['muted']}; font-size: 12px; background: transparent; }}
             QSlider#FS_Seek::groove:horizontal {{
-                height: 6px; background: {t['panel_bg_2']}; border-radius: 3px;
+                height: 2px; background: {t['panel_bg_2']}; border-radius: 1px;
             }}
             QSlider#FS_Seek::sub-page:horizontal {{
-                background: {t['gold']}; border-radius: 3px;
+                background: {t['text']}; border-radius: 1px;
             }}
             QSlider#FS_Seek::handle:horizontal {{
-                width: 16px; height: 16px; margin: -5px 0;
+                width: 16px; height: 16px; margin: -7px 0;
                 background: #ffffff; border-radius: 8px;
             }}
             QPushButton {{
@@ -244,13 +244,12 @@ class FullscreenPlayer(QWidget):
                 border-radius: 18px;
             }}
             QPushButton:hover {{ background: {t['active']}; }}
-            QPushButton:checked {{ border: 2px solid {t['gold']}; }}
+            QPushButton:checked {{ border: 2px solid {t['text']}; }}
             QPushButton#FS_Play {{
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 {t['gold_light']}, stop:1 {t['gold']});
-                border: none; border-radius: 42px;
+                background: {t['active']};
+                border: 1px solid {t['border']}; border-radius: 42px;
             }}
-            QPushButton#FS_Play:hover {{ background: {t['gold_light']}; }}
+            QPushButton#FS_Play:hover {{ background: {t['panel_bg_2']}; }}
             QPushButton#FS_Ctrl {{ border-radius: 28px; }}
             QLabel#FS_Hint {{
                 color: {t['muted']}; font-size: 11px; background: transparent;
@@ -264,7 +263,7 @@ class FullscreenPlayer(QWidget):
                                (self.theme_btn, Icon.BRUSH, 18),
                                (self.close_btn, Icon.CLOSE, 16)):
             try:
-                pm = render_icon(svg, size, t["gold_light"], dpr)
+                pm = render_icon(svg, size, t["text"], dpr)
                 btn.setIcon(QIcon(pm))
                 btn.setIconSize(pm.size() / dpr if dpr else pm.size())
             except Exception:
@@ -610,7 +609,7 @@ class FullscreenPlayer(QWidget):
         if 0 <= idx < len(self._line_labels):
             try:
                 self._line_labels[idx].setStyleSheet(
-                    f"color: {t['gold_light']}; font-size: {mw._lyrics_px(17)}px;"
+                    f"color: {t['text']}; font-size: {mw._lyrics_px(17)}px;"
                     f"font-weight: 700; background: transparent;")
                 if self._lyrics_scroll is not None:
                     self._lyrics_scroll.ensureWidgetVisible(
@@ -629,7 +628,7 @@ class FullscreenPlayer(QWidget):
             try:
                 active = (i == self._active_line)
                 lbl.setStyleSheet(
-                    f"color: {t['gold_light'] if active else t['muted']}; "
+                    f"color: {t['text'] if active else t['muted']}; "
                     f"font-size: {mw._lyrics_px(17 if active else 15)}px; "
                     f"font-weight: {700 if active else 400};"
                     f"background: transparent;")

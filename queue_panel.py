@@ -23,16 +23,16 @@ class QueuePanel(QFrame):
         super().__init__(parent)
         self.main_window = main_window
         self.setObjectName("QueuePanel")
-        self.setFixedWidth(300)
+        self.setFixedWidth(340)
         self.hide()  # toggled by the queue button
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(8)
 
         head = QHBoxLayout()
         title = QLabel("Up Next")
-        title.setObjectName("NowTitle")
+        title.setObjectName("QueueTitle")
         head.addWidget(title)
         head.addStretch(1)
         close_btn = QPushButton("✕")
@@ -47,9 +47,8 @@ class QueuePanel(QFrame):
         self.list_widget.itemDoubleClicked.connect(self._jump_to_item)
         layout.addWidget(self.list_widget, 1)
 
-        hint = QLabel("Double-click to jump · right-click for options")
-        hint.setStyleSheet(f"color: {self.main_window.theme['muted']}; font-size: 11px;")
-        layout.addWidget(hint)
+        # Nuvx keeps the hint out of the layout — it lives on the list.
+        self.list_widget.setToolTip("Double-click to jump · right-click for options")
         self.list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list_widget.customContextMenuRequested.connect(self._context_menu)
         self._apply_style()
@@ -57,11 +56,19 @@ class QueuePanel(QFrame):
     # ------------------------------------------------------------------
     def _apply_style(self):
         t = self.main_window.theme
+        glass = t.get("glass_panel", t.get("panel_bg"))
+        border = t.get("glass_border", t.get("border"))
+        text = t.get("text", "#f2f0f5")
+        # Nuvx drawer: 340 px, glass 0.42, no frame.
         self.setStyleSheet(f"""
             QFrame#QueuePanel {{
-                background: {t['panel_bg']};
-                border-left: 1px solid {t['border']};
+                background: {glass};
+                border: none;
                 border-radius: 0;
+            }}
+            QLabel#QueueTitle {{
+                color: {text}; font-size: 20px; font-weight: 700;
+                background: transparent; border: none;
             }}
         """)
 
@@ -73,7 +80,7 @@ class QueuePanel(QFrame):
         icon = None
         try:
             from PyQt6.QtGui import QIcon as _QIcon
-            icon = _QIcon(render_icon(Icon.MUSIC_NOTE, 16, mw.theme["gold"], dpr))
+            icon = _QIcon(render_icon(Icon.MUSIC_NOTE, 16, mw.theme["muted"], dpr))
         except Exception:
             pass
         pl = mw.current_playlist
@@ -138,6 +145,14 @@ class QueuePanel(QFrame):
         act_remove = menu.addAction("Remove from queue")
         chosen = menu.exec(self.list_widget.mapToGlobal(pos))
         if chosen == act_jump:
+            self._jump_to_item(item)
+        elif chosen == act_remove:
+            pos_idx = item.data(Qt.ItemDataRole.UserRole)
+            if 0 <= pos_idx < len(self.main_window.current_playlist):
+                self.main_window.current_playlist.pop(pos_idx)
+                if pos_idx < self.main_window.current_index:
+                    self.main_window.current_index -= 1
+            self.refresh()
             self._jump_to_item(item)
         elif chosen == act_remove:
             pos_idx = item.data(Qt.ItemDataRole.UserRole)

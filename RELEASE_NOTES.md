@@ -1,48 +1,39 @@
-# Release Notes — Golden Music 3.1.0
+# Release Notes — Golden Music 3.2.0
 
-3.1.0 is the engineering-remediation release: every Critical and High defect
-from the v3.0.0 audit is fixed, verified by the new `test_v31_regression`
-suite (62 checks) riding CI, plus the existing 13 suites (all green).
+3.2.0 is the Nuvx visual-accuracy release: the user-supplied 12-file UI
+rewrite, grafted onto the 3.1.0 remediation base by method-level
+three-way merge — the 3.1 machinery (unified queue, rebuilt download
+manager, async covers, bounded shutdown) is preserved under the new
+chrome — plus Golden Music's first Linux release.
 
-## Download manager (rebuilt)
-- Windows-safe disk-space validation (`shutil.disk_usage`; `os.statvfs`
-  crashed with an uncaught AttributeError on Windows)
-- Active-job cancellation signals the worker — never unlinks a `.part`
-  the worker still holds open (PermissionError on Windows before)
-- Persistent job REGISTRY: `retry()` actually finds FAILED jobs (it was a
-  silent no-op in 3.0.0)
-- History + queue persist atomically to `downloads_state.json` —
-  restart recovery resumes unfinished downloads via HTTP Range
-- In-flight duplicate-URL prevention; remove / clear-finished actions
-- Completed downloads join the local library exactly once
+## Visual accuracy pass (Nuvx UI)
 
-## Unified playback queue
-- ONE queue for local files AND online tracks — "Play next", Next,
-  Previous, repeat-one and shuffle behave identically across both
-  (v3.0's separate online queue never actually played next)
-- "Up Next" queue drawer wired into the player bar (the dead QueuePanel
-  module is live again)
+- Player bar: single 56px row, LCD with elapsed/total swap, 2px seek
+  line; the "Up Next" queue drawer button kept
+- Mini player: one-row 400x112; queue drawer: 340px frameless glass
+- Search: 42px pill field (Enter submits), frameless result rows
+- Home: 168px tiles, round covers with centre-crop rendering — the
+  async cover loader (3.1 fix) intact
+- Sidebar / settings / tray: neutral glass, gold reserved for state;
+  Nuvx radius ladder; typography 34/22/13.5
+- `glass_alpha()`: Nuvx glass opacities over the theme's own colour —
+  correct in dark and light mode; `_qcolor()` now parses float-alpha
+  `rgba()` strings
+- Update pill anchored bottom-right (player bar moved to top)
 
-## Online correctness
-- Item-specific download eligibility from the Internet Archive's own
-  access metadata (no more blanket "everything is downloadable")
-- Stream-resolution and search races fixed with request generations —
-  stale responses can never replace a newer selection or pollute the
-  search cache
-- Custom HTTP(S) proxy setting (search/stream/artwork/downloads)
+## First Linux release
 
-## Home
-- Album-aware cards (real album tags, distinct albums)
-- "Add to Playlist" / "Open Album" act on the SELECTED item
-- Async cover loading — artwork reads + decodes off the GUI thread
-- "See all artists" navigates (was a silent no-op)
+- CI matrix now `windows-latest` + `ubuntu-latest`
+- New `release-linux` job (ubuntu-latest): full suite + Bandit +
+  PyInstaller bundle as `GoldenMusic-3.2.0-linux-x86_64.tar.gz` +
+  sha256, uploaded into the release the Windows job creates
+- `build_release.py` is cross-platform: offscreen smoke test on headless
+  Linux, trims + `strip`, symlink-deduped size budget (260 MB Linux /
+  115 MB Windows)
 
-## Lyrics settings
-- Text size (85–130%) and timing offset (±5 s) — persisted, applied live
+## Windows artifacts (per release)
 
-## Shutdown reliability
-- Coordinated, bounded shutdown of every background worker
-  (download worker, stream resolvers, artwork, update probe, cover
-  loader) — no more interpreter aborts at teardown
+- `GoldenMusicSetup-3.2.0.exe` + `.sha256` — the installer
+- `GoldenMusic-3.2.0-portable.zip` — the portable edition
 
 See CHANGELOG.md for the full list and BUG_TRACKER.md for root causes.

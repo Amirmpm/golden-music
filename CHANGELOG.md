@@ -1,5 +1,38 @@
 # Changelog
 
+## [3.2.0] - 2026-11-21
+
+### Nuvx visual accuracy pass (user-supplied UI rewrite)
+
+The user's 12-file Nuvx UI rewrite, grafted onto the 3.1.0 remediation base
+by method-level three-way merge — the 3.1 machinery (unified queue, rebuilt
+download manager, async covers, bounded shutdown) is preserved under the
+new chrome:
+
+- **Player bar**: single 56px row, LCD with elapsed/total swap, 2px seek
+  line; the queue drawer button ("Up Next") kept
+- **Mini player**: one-row 400x112; **queue drawer**: 340px frameless glass
+- **Search**: 42px pill field (Enter submits), frameless result rows
+- **Home**: 168px tiles (Nuvx 144px minimum), round covers with
+  centre-crop rendering; the async cover loader (3.1 fix) intact
+- **Sidebar / settings / tray**: neutral glass — gold reserved for state;
+  Nuvx radius ladder; typography 34/22/13.5
+- **liquidglass.glass_alpha()**: Nuvx glass opacities over the theme's own
+  colour (correct in dark AND light mode)
+- **_qcolor()**: QColor now parses float-alpha `rgba()` strings
+- **Update pill** anchored bottom-right (player bar moved to top)
+
+### First Linux release
+
+- **release.yml**: new `release-linux` job (ubuntu-latest) — full suite +
+  Bandit + PyInstaller bundle as `GoldenMusic-3.2.0-linux-x86_64.tar.gz`
+  + sha256, uploaded into the release the Windows job creates (ordered
+  via `needs: release`)
+- **ci.yml**: test matrix now `windows-latest` + `ubuntu-latest`
+- **build_release.py**: cross-platform (binary name, offscreen smoke test on
+  headless Linux, Linux trims + `strip`, symlink-deduped size budget —
+  260 MB on Linux / 115 MB on Windows)
+
 ## [3.1.0] - 2026-11-20
 
 ### Complete engineering remediation
@@ -618,6 +651,6 @@ The first stable, production-ready version of Golden Music!
 
 <div align="center">
 
-**Golden Music v3.1.0** — Remediation Release · Unified Queue · Download Manager Rebuild · Windows-Safe · Verified 🪟
+**Golden Music v3.2.0** — Nuvx Visual Accuracy · First Linux Release · Unified Queue · Download Manager Rebuild · Verified 🪟🐧
 
 </div>

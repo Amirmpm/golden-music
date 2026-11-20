@@ -1,6 +1,6 @@
 # 📦 Golden Music — Installation Guide
 
-This guide covers all the ways to install and run Golden Music on Windows.
+This guide covers all the ways to install and run Golden Music on Windows and Linux.
 
 ---
 
@@ -9,12 +9,26 @@ This guide covers all the ways to install and run Golden Music on Windows.
 ### Download the Installer
 
 1. Go to [Releases](../../releases)
-2. Download `GoldenMusicSetup-3.1.0.exe`
+2. Download `GoldenMusicSetup-3.2.0.exe`
 3. Run the installer — it detects an existing installation and updates in place; your library, favorites and settings are preserved
 4. Follow the setup wizard
 5. Launch Golden Music from the Start Menu or Desktop shortcut
 
 **That's it!** No Python or dependencies needed — everything is bundled.
+
+### Linux (Portable)
+
+1. Go to [Releases](../../releases)
+2. Download `GoldenMusic-3.2.0-linux-x86_64.tar.gz` and its `.sha256`
+3. Verify, extract and run:
+   ```bash
+   sha256sum -c GoldenMusic-3.2.0-linux-x86_64.tar.gz.sha256
+   tar xzf GoldenMusic-3.2.0-linux-x86_64.tar.gz
+   ./GoldenMusic/GoldenMusic
+   ```
+
+No installer is shipped on Linux — the tar.gz is a self-contained PyInstaller
+portable bundle, the same edition as the Windows portable zip.
 
 ---
 
@@ -67,10 +81,14 @@ python --version
 5. **Find the output:**
    ```
    dist\GoldenMusic\GoldenMusic.exe         # The app
-   dist\installer\GoldenMusicSetup-3.1.0.exe # The installer
+   dist\installer\GoldenMusicSetup-3.2.0.exe # The installer
    ```
 
-6. **Run the installer** (`GoldenMusicSetup-3.1.0.exe`) to install properly.
+6. **Run the installer** (`GoldenMusicSetup-3.2.0.exe`) to install properly.
+
+**Linux builds:** run `python build_release.py` directly on Linux — no Inno
+Setup is involved (there is no installer); CI packs the resulting
+`dist/GoldenMusic/` folder into `GoldenMusic-3.2.0-linux-x86_64.tar.gz`.
 
 ---
 
@@ -117,7 +135,7 @@ golden-music\
 │   │                   ├── platforms\
 │   │                   └── styles\
 │   └── installer\
-│       └── GoldenMusicSetup-3.1.0.exe      # The installer
+│       └── GoldenMusicSetup-3.2.0.exe      # The installer
 └── ...
 ```
 
@@ -194,6 +212,8 @@ Golden Music stores its data at:
 ```
 
 **To reset to defaults:** Delete this folder and restart the app.
+
+On Linux the same data folder is `~/.goldenmusic/`.
 
 *Portable mode:* if a `goldenmusic_config.json` sits next to the executable
 (or `main.pyw`), the app stores everything in that folder instead.

@@ -158,3 +158,93 @@ jobs:
             dist/installer/*.sha256
             dist/installer/*.zip
             release_notes.md
+
+  release-linux:
+    # Linux portable edition — same gates (full suite + Bandit), then the
+    # PyInstaller bundle as a tar.gz with checksums, uploaded into the
+    # release the Windows job just created (hence needs: release).
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install Qt runtime libraries (headless offscreen Qt)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libglx0 libxkbcommon0 libxkbcommon-x11-0 \
+            libdbus-1-3 libfontconfig1 libxcb-cursor0 libxcb-icccm4 \
+            libxcb-keysyms1 libxcb-image0 libxcb-shape0 libxcb-randr0 \
+            libxcb-xinerama0 libxcb-render-util0 libxcb-util1
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Determine version
+        id: ver
+        shell: python
+        run: |
+          import os, re, pathlib
+          v = re.search(r'APP_VERSION\s*=\s*"([^"]+)"',
+                        pathlib.Path("version.py").read_text(encoding="utf-8")).group(1)
+          tag = "${{ github.ref_name }}"
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"version={v}\n")
+          if "${{ github.event_name }}" == "push":
+              assert tag == f"v{v}", f"tag {tag} != version.py v{v} — aborting"
+          print(f"version={v} tag={tag}")
+
+      - name: Run test suites (offscreen Qt)
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PYTHONIOENCODING: utf-8
+        run: |
+          set -e
+          for t in test_functional test_deep test_stability test_stability_v2 \
+                   test_history_nav test_features test_crash test_tray_toggle \
+                   test_open_with test_shortcuts test_updater test_version_sync; do
+            echo "::group::=== $t ==="
+            python "scripts/$t.py"
+            echo "::endgroup::"
+          done
+
+      - name: Security scan (Bandit)
+        run: |
+          pip install bandit
+          bandit -r . -q --exclude "./.git,./build,./dist,./screenshots,./scripts,./assets" --severity-level medium
+
+      - name: Build portable bundle (PyInstaller + trim + strip)
+        run: python build_release.py
+
+      - name: Pack tar.gz + SHA-256 checksum
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          cd dist
+          mkdir -p installer
+          tar -czf "installer/GoldenMusic-${v}-linux-x86_64.tar.gz" GoldenMusic
+          cd installer
+          sha256sum "GoldenMusic-${v}-linux-x86_64.tar.gz" > "GoldenMusic-${v}-linux-x86_64.tar.gz.sha256"
+          cat "GoldenMusic-${v}-linux-x86_64.tar.gz.sha256"
+
+      - name: Upload Linux assets to the release (tag pushes only)
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.ref_name }}" dist/installer/GoldenMusic-*-linux-x86_64.tar.gz dist/installer/*.tar.gz.sha256 --clobber
+
+      - name: Upload artifacts (dry-run visibility)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-candidates-linux
+          path: |
+            dist/installer/*.tar.gz
+            dist/installer/*.sha256

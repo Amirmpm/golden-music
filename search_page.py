@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-                              QPushButton, QLineEdit, QListWidget,
+                              QLineEdit, QListWidget,
                               QListWidgetItem, QAbstractItemView, QMenu,
                               QSizePolicy, QProgressBar)
 from PyQt6.QtGui import QPixmap
@@ -58,6 +58,8 @@ class OnlineSearchWorker(QThread):
                 return
             self.results_ready.emit(tracks)
         except Exception as e:
+            if not self._cancelled:
+                self.error_occurred.emit(str(e))
             if not self._cancelled:
                 self.error_occurred.emit(str(e))
 
@@ -119,7 +121,7 @@ class SearchPage(QWidget):
         self.title = QLabel("Search")
         lay.addWidget(self.title)
 
-        # search pill
+        # search pill — Enter submits (Nuvx has no separate Search button)
         bar = QHBoxLayout()
         bar.setSpacing(10)
         self.field = QLineEdit()
@@ -127,12 +129,7 @@ class SearchPage(QWidget):
         self.field.setFixedHeight(42)
         self.field.setClearButtonEnabled(True)
         self.field.returnPressed.connect(self._submit)
-        bar.addWidget(self.field, 2)
-        self.go_btn = QPushButton("Search")
-        self.go_btn.setFixedHeight(38)
-        self.go_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.go_btn.clicked.connect(self._submit)
-        bar.addWidget(self.go_btn, 0)
+        bar.addWidget(self.field, 1)
         lay.addLayout(bar)
 
         # suggestions row (history-driven, instant, offline)
@@ -161,12 +158,13 @@ class SearchPage(QWidget):
     def set_theme(self, theme: dict):
         self.theme = dict(theme or {})
         t = self.theme
-        accent = t.get("gold", "#e9b957")
         text = t.get("text", "#f2f0f5")
         muted = t.get("muted", "#b2acba")
-        border = t.get("border", "rgba(255,255,255,0.14)")
-        fill = t.get("glass_fill", "rgba(255,255,255,0.08)")
+        border = t.get("glass_border", t.get("border", "rgba(255,255,255,0.14)"))
+        fill = t.get("glass_fill", "rgba(255,255,255,0.06)")
+        hover = t.get("glass_hover", "rgba(255,255,255,0.14)")
         radius = t.get("lg", {}).get("radius_pill", 19)
+        # Single source of truth: Nuvx shows ONE Bold 34 page title.
         self.title.setStyleSheet(
             f"color: {text}; font-size: 34px; font-weight: 700; "
             f"background: transparent;")
@@ -179,33 +177,29 @@ class SearchPage(QWidget):
                 padding: 0 18px;
                 font-size: 15px;
             }}
-            QLineEdit:focus {{ border: 1px solid {accent}; }}
-        """)
-        self.go_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {accent};
-                color: {'#111' if t.get('is_dark', True) else '#fff'};
-                border: none; border-radius: 19px; padding: 0 22px;
-                font-weight: 600; font-size: 14px;
-            }}
+            QLineEdit:focus {{ border: 1px solid {hover}; }}
         """)
         self.status.setStyleSheet(
             f"color: {muted}; font-size: 13px; background: transparent;")
         self.suggestion_label.setStyleSheet(
             f"color: {muted}; font-size: 12px; background: transparent;")
+        # Frameless glass result rows (no per-row card border).
         self.results.setStyleSheet(f"""
             QListWidget {{
                 background: transparent; border: none; outline: 0;
             }}
             QListWidget::item {{
-                background: {fill};
-                border: 1px solid {border};
+                background: transparent;
+                border: none;
                 border-radius: 8px;
-                margin: 3px 0;
+                margin: 1px 0;
                 padding: 8px 12px;
+                min-height: 44px;
             }}
+            QListWidget::item:hover {{ background: {hover}; }}
             QListWidget::item:selected {{
-                border: 1px solid {accent};
+                background: {t.get('active', fill)};
+                color: {text};
             }}
         """)
 
@@ -352,3 +346,55 @@ class SearchPage(QWidget):
             else:
                 m.addAction("Download", lambda: self.download_track_requested.emit(t))
         m.exec(self.results.mapToGlobal(pos))
+        if t is not None:
+            self.play_track_requested.emit(t)
+
+    def _on_row_menu(self, pos):
+        item = self.results.itemAt(pos)
+        if item is None:
+            return
+        t = self._row_track(item)
+        if t is None:
+            return
+        m = QMenu(self)
+        m.addAction("Play (stream)", lambda: self.play_track_requested.emit(t))
+        m.addAction("Play next", lambda: self.play_next_requested.emit(t))
+        m.addAction("Add to queue", lambda: self.add_queue_requested.emit(t))
+        # Download eligibility is item-specific and established at resolve
+        # time (online.py assesses the source's own access metadata); the
+        # action stays available and the manager refuses restricted items
+        # with a clear message (v3.0.0 hard-marked everything downloadable).
+        if getattr(self.provider, "supports_download", False):
+            if getattr(t, "downloads_allowed", None) is False:
+                m.addAction("Download (restricted on source)",
+                            lambda: self.download_track_requested.emit(t))
+            else:
+                m.addAction("Download", lambda: self.download_track_requested.emit(t))
+        m.exec(self.results.mapToGlobal(pos))
+    def _on_zombie_finished(self):
+        w = self.sender()
+        if w is not None and w in self._zombies:
+            self._zombies.remove(w)
+        if w is not None:
+            w.deleteLater()
+    def _retire_worker(self, w):
+        """Cancel a superseded worker and keep a Python reference until its
+        thread finishes (a running QThread must not be garbage-collected)."""
+        if w is None:
+            return
+        try:
+            w.cancel()
+        except Exception:
+            pass
+        self._zombies.append(w)
+        w.finished.connect(self._on_zombie_finished)
+    def cancel_search(self):
+        """Shutdown hook: cancel the in-flight search (stale emissions are
+        suppressed by the worker's own flag)."""
+        if self._worker is not None:
+            self._worker.cancel()
+        for w in list(self._zombies):
+            try:
+                w.cancel()
+            except Exception:
+                pass

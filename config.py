@@ -382,36 +382,37 @@ def build_qss(t: dict) -> str:
     QToolButton#RailBtn:hover {{ background: {hover_surface}; }}
     QToolButton#RailBtn:checked {{
         background: {t['active']};
-        border-left: 3px solid {t['gold']};
+        border-left: none;
     }}
     QWidget#MainArea {{ background: transparent; }}
     QLabel#PageTitle {{
-        color: {t['text']}; font-size: 20px; font-weight: 700;
-        letter-spacing: 0.3px;
+        color: {t['text']}; font-size: 34px; font-weight: 700;
+        letter-spacing: 0.2px;
     }}
     QLabel#NowTitle {{
-        color: {t['gold_light']}; font-size: 22px; font-weight: 700;
+        color: {t['text']}; font-size: 22px; font-weight: 700;
     }}
     QLabel#NowArtist {{
         color: {t['muted']}; font-size: 13px;
     }}
     QListWidget#TrackList, QTreeWidget#TrackList {{
-        background: {t['panel_bg']};
-        border: 1px solid {glass_border};
-        border-radius: 16px;
+        background: transparent;
+        border: none;
+        border-radius: 8px;
         color: {t['text']};
         font-size: 13px;
-        padding: 10px;
+        padding: 4px;
         outline: 0;
     }}
     QListWidget#TrackList::item {{
-        min-height: 34px;
-        border-radius: 10px;
+        min-height: 56px;
+        border-radius: 8px;
         margin: 1px 0;
+        padding: 0 8px;
     }}
-    QListWidget#TrackList::item:hover {{ background: {hover_surface}; }}
+    QListWidget#TrackList::item:hover {{ background: {t['active']}; }}
     QListWidget#TrackList::item:selected {{
-        background: {t['active']}; color: {t['gold_light']};
+        background: {t['active']}; color: {t['text']};
     }}
     QListWidget#TrackList QScrollBar:vertical,
     QTreeWidget#TrackList QScrollBar:vertical {{
@@ -422,7 +423,7 @@ def build_qss(t: dict) -> str:
         background: {t['border']}; border-radius: 4px; min-height: 28px;
     }}
     QListWidget#TrackList QScrollBar::handle:vertical:hover,
-    QTreeWidget#TrackList QScrollBar::handle:vertical:hover {{ background: {t['gold_deep']}; }}
+    QTreeWidget#TrackList QScrollBar::handle:vertical:hover {{ background: {hover_surface}; }}
     QListWidget#TrackList QScrollBar::add-line:vertical,
     QListWidget#TrackList QScrollBar::sub-line:vertical,
     QTreeWidget#TrackList QScrollBar::add-line:vertical,
@@ -433,71 +434,71 @@ def build_qss(t: dict) -> str:
     QTreeWidget#TrackList QScrollBar::sub-page:vertical {{ background: transparent; }}
     QFrame#PlayerBar {{
         background: {t['panel_bg']};
-        border-top: 1px solid {glass_border};
-        border-radius: 18px 18px 0 0;
+        border-bottom: 1px solid {glass_border};
+        border-radius: 0;
+    }}
+    QFrame#LcdFrame {{
+        background: {t['panel_bg_2']};
+        border: 1px solid {glass_border};
+        border-radius: 4px;
     }}
     QLabel#BarTitle {{
-        color: {t['text']}; font-size: 13px; font-weight: 600;
+        color: {t['text']}; font-size: 12.5px; font-weight: 600;
+        background: transparent;
     }}
-    QLabel#BarArtist {{ color: {t['muted']}; font-size: 12px; }}
+    QLabel#BarArtist {{ color: {t['muted']}; font-size: 11px; background: transparent; }}
     QLabel#BarCover {{
-        background: transparent; border-radius: 10px;
+        background: transparent; border-radius: 4px;
         border: 1px solid {glass_border};
     }}
     QPushButton#PlayBtn {{
-        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-            stop:0 {t['gold_light']}, stop:1 {t['gold']});
-        border: none; border-radius: 28px;
+        background: {t['active']};
+        border: 1px solid {glass_border}; border-radius: 18px;
         padding: 0; margin: 0;
     }}
-    QPushButton#PlayBtn:hover {{
-        background: {t['gold_light']};
-    }}
-    QPushButton#PlayBtn:pressed {{ background: {t['gold_deep']}; }}
+    QPushButton#PlayBtn:hover {{ background: {hover_surface}; }}
+    QPushButton#PlayBtn:pressed {{ background: {t['panel_bg']}; }}
     QPushButton#GoldBtn {{
-        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-            stop:0 {t['gold']}, stop:1 {t['gold_deep']});
-        color: {t['window_bg'] if is_dark else '#ffffff'};
+        background: {t['text']};
+        color: {t['window_bg']};
         min-height: 34px; max-height: 34px;
         border-radius: 17px;
         padding: 0 20px; font-weight: 600; font-size: 13px;
+        border: none;
     }}
-    QPushButton#GoldBtn:hover {{ background: {t['gold_light']}; color: {t['window_bg']}; }}
-    QPushButton#GoldBtn:pressed {{ background: {t['gold_deep']}; padding-top: 2px; }}
+    QPushButton#GoldBtn:hover {{ background: {t['muted']}; }}
+    QPushButton#GoldBtn:pressed {{ padding-top: 2px; }}
     QPushButton#GhostBtn {{
         background: transparent; color: {t['text']};
         border: 1px solid {glass_border}; border-radius: 17px;
         min-height: 32px; max-height: 32px;
         padding: 0 20px; font-size: 13px;
     }}
-    QPushButton#GhostBtn:hover {{ background: {hover_surface}; border-color: {t['gold']}; color: {t['gold_light']}; }}
-    QPushButton#GhostBtn:pressed {{ background: {t['active']}; }}
+    QPushButton#GhostBtn:hover {{ background: {t['active']}; border-color: {glass_border}; color: {t['text']}; }}
+    QPushButton#GhostBtn:pressed {{ background: {t['panel_bg_2']}; }}
     QSlider#SeekSlider::groove:horizontal {{
-        height: 5px; background: {t['panel_bg_2']}; border-radius: 2.5px;
+        height: 2px; background: {t['panel_bg_2']}; border-radius: 1px;
     }}
     QSlider#SeekSlider::sub-page:horizontal {{
-        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-            stop:0 {t['gold_deep']}, stop:1 {t['gold_light']});
-        border-radius: 2.5px;
+        background: {t['text']}; border-radius: 1px;
     }}
     QSlider#SeekSlider::add-page:horizontal {{
-        background: {t['panel_bg_2']}; border-radius: 2.5px;
+        background: {t['panel_bg_2']}; border-radius: 1px;
     }}
     QSlider#SeekSlider::handle:horizontal {{
-        width: 14px; height: 14px; margin: -5px 0;
-        background: #ffffff; border-radius: 7px;
+        width: 0; height: 0; background: transparent;
     }}
     QSlider#SeekSlider::handle:horizontal:hover {{
-        background: {t['gold_light']};
+        background: transparent;
     }}
     QSlider#VolSlider::groove:horizontal {{
-        height: 4px; background: {t['panel_bg_2']}; border-radius: 2px;
+        height: 2px; background: {t['panel_bg_2']}; border-radius: 1px;
     }}
-    QSlider#VolSlider::sub-page:horizontal {{ background: {t['gold']}; border-radius: 2px; }}
-    QSlider#VolSlider::add-page:horizontal {{ background: {t['panel_bg_2']}; border-radius: 2px; }}
+    QSlider#VolSlider::sub-page:horizontal {{ background: {t['text']}; border-radius: 1px; }}
+    QSlider#VolSlider::add-page:horizontal {{ background: {t['panel_bg_2']}; border-radius: 1px; }}
     QSlider#VolSlider::handle:horizontal {{
-        width: 12px; height: 12px; margin: -4px 0;
-        background: #ffffff; border-radius: 6px;
+        width: 8px; height: 8px; margin: 0;
+        background: #ffffff; border-radius: 4px;
     }}
     QLabel#TimeLabel {{ color: {t['muted']}; font-size: 11px; min-width: 36px; }}
     QLabel#CountLabel {{ color: {t['muted']}; font-size: 12px; }}
@@ -512,15 +513,16 @@ def build_qss(t: dict) -> str:
         background: {t['panel_bg_2']}; color: {t['text']};
         border: 1px solid {glass_border}; border-radius: 18px;
         padding: 8px 16px; font-size: 12px;
-        selection-background-color: {t['gold']};
+        selection-background-color: {t['active']};
+        selection-color: {t['text']};
     }}
-    QLineEdit:focus {{ border-color: {t['gold']}; background: {_darken(t['panel_bg_2'], 8)}; }}
+    QLineEdit:focus {{ border-color: {hover_surface}; background: {t['panel_bg_2']}; }}
     QComboBox {{
         background: {t['panel_bg_2']}; color: {t['text']};
         border: 1px solid {glass_border}; border-radius: 14px;
         padding: 7px 14px; font-size: 12px; min-width: 80px;
     }}
-    QComboBox:hover {{ border-color: {t['gold']}; }}
+    QComboBox:hover {{ background: {hover_surface}; }}
     QComboBox::drop-down {{ border: none; width: 24px; }}
     QComboBox::down-arrow {{
         image: none; width: 0; height: 0;
@@ -532,16 +534,18 @@ def build_qss(t: dict) -> str:
     QComboBox QAbstractItemView {{
         background: {t['panel_bg']}; color: {t['text']};
         selection-background-color: {t['active']};
-        selection-color: {t['gold_light']};
+        selection-color: {t['text']};
         border: 1px solid {glass_border}; border-radius: 10px;
         outline: 0; padding: 4px;
     }}
     QMenu {{
         background: {t['panel_bg']}; color: {t['text']};
-        border: 1px solid {glass_border}; border-radius: 12px; padding: 6px;
+        border: 1px solid {glass_border}; border-radius: 8px; padding: 6px;
+        min-width: 226px;
     }}
-    QMenu::item {{ padding: 8px 22px; border-radius: 8px; font-size: 12px; }}
-    QMenu::item:selected {{ background: {t['active']}; color: {t['gold_light']}; }}
+    QMenu::item {{ padding: 0 14px; border-radius: 7px; font-size: 14px;
+                   height: 34px; margin: 1px 4px; }}
+    QMenu::item:selected {{ background: {t['active']}; color: {t['text']}; }}
     QMenu::separator {{ height: 1px; background: {t['border']}; margin: 5px 10px; }}
     QToolTip {{
         background: {t['panel_bg_2']}; color: {t['text']};
@@ -799,8 +803,6 @@ def extract_title_artist(filepath: str) -> tuple:
         artist = "Unknown Artist"
 
     return title, artist
-
-
 def extract_album(filepath: str) -> str:
     """Album tag via mutagen easy-mode ("" when absent/unreadable).
 

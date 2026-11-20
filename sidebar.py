@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import (Qt, QSize, QTimer, QVariantAnimation,
                            QEasingCurve, pyqtSignal)
-from PyQt6.QtWidgets import (QFrame, QVBoxLayout, QHBoxLayout, QLabel,
+from PyQt6.QtWidgets import (QFrame, QVBoxLayout, QHBoxLayout,
                               QPushButton, QToolButton, QSizePolicy,
                               QScrollArea, QWidget)
 from PyQt6.QtGui import QPixmap, QIcon
@@ -47,6 +47,7 @@ class NavRow(QPushButton):
         self.setText(label)
         self._theme = {}
         self._collapsed = False
+        self._hovered = False
 
     def set_theme(self, theme: dict, collapsed: bool):
         self._theme = theme
@@ -54,15 +55,22 @@ class NavRow(QPushButton):
         self._refresh()
 
     def _refresh(self):
+        """Nuvx nav row: neutral glass pill + white icon/label when active.
+
+        No gold side bar, no gold icon — accent is reserved for real state
+        (see NUVX_ANALYSIS §3.1 / §4)."""
         t = self._theme or {}
-        radius = 12
-        accent = t.get("gold", "#e9b957")
+        lgx = t.get("lg", {}) or {}
+        # Nuvx selection pill ≈ 11 px; ladder: card 8 (+3 for the pill).
+        radius = max(6, int(lgx.get("radius_card", 8)) + 3)
         text = t.get("text", "#f2f0f5")
         muted = t.get("muted", "#b2acba")
-        glass = t.get("glass_fill", "rgba(255,255,255,0.12)")
-        hover = t.get("glass_hover", "rgba(255,255,255,0.20)")
-        ic = render_icon(self.icon_name, 20,
-                         accent if self.isChecked() else muted)
+        fill = t.get("glass_fill", "rgba(255,255,255,0.10)")
+        hover_bg = lg.glass_alpha(fill, 0.10)
+        checked_bg = lg.glass_alpha(fill, 0.16)
+        on = self.isChecked() or self._hovered
+        # TEXT_DIM → TEXT: brighten on hover/selected, never accent-tinted.
+        ic = render_icon(self.icon_name, 20, text if on else muted)
         self.setIcon(QIcon(ic))
         self.setIconSize(QSize(20, 20))
         self.setStyleSheet(f"""
@@ -71,17 +79,17 @@ class NavRow(QPushButton):
             border: none;
             border-radius: {radius}px;
             text-align: {('center') if self._collapsed else 'left'};
-            padding-left: {12 if self._collapsed else 22}px;
+            padding-left: {0 if self._collapsed else 24}px;
             padding-right: 8px;
             color: {text if self.isChecked() else muted};
             font-size: 15px;
             font-weight: {600 if self.isChecked() else 400};
         }}
-        QPushButton:hover {{ background: {hover}; }}
+        QPushButton:hover {{ background: {hover_bg}; }}
         QPushButton:checked {{
-            background: {glass};
+            background: {checked_bg};
             color: {text};
-            border-left: 3px solid {accent};
+            border: none;
         }}
         """)
         if self._collapsed:
@@ -90,6 +98,16 @@ class NavRow(QPushButton):
         else:
             self.setText(self.label_text)
             self.setToolTip("")
+
+    def enterEvent(self, e):
+        self._hovered = True
+        self._refresh()
+        super().enterEvent(e)
+
+    def leaveEvent(self, e):
+        self._hovered = False
+        self._refresh()
+        super().leaveEvent(e)
 
 
 class Sidebar(QFrame):
@@ -111,7 +129,7 @@ class Sidebar(QFrame):
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 12, 0, 12)
-        lay.setSpacing(2)
+        lay.setSpacing(6)
 
         # -- logo row --------------------------------------------------
         logo_row = QHBoxLayout()
@@ -141,11 +159,6 @@ class Sidebar(QFrame):
         logo_row_w = QWidget()
         logo_row_w.setLayout(logo_row)
         lay.addWidget(logo_row_w)
-
-        self.title_label = QLabel("Golden Music")
-        self.title_label.setObjectName("SidebarTitle")
-        self.title_label.setStyleSheet("color: transparent; border: none;")
-        lay.addWidget(self.title_label)
 
         # -- nav rows --------------------------------------------------
         self.rows: dict[str, NavRow] = {}
@@ -206,18 +219,19 @@ class Sidebar(QFrame):
         collapsed = self._collapsed
         lgx = t.get("lg", {})
         radius = lgx.get("radius_panel", 14)
-        border = t.get("border", "rgba(255,255,255,0.14)")
-        panel = t.get("glass_fill", "rgba(255,255,255,0.10)")
-        accent = t.get("gold", "#e9b957")
+        panel = t.get("glass_panel", t.get("glass_fill",
+                                           "rgba(255,255,255,0.28)"))
         muted = t.get("muted", "#b2acba")
+        # Nuvx sidebar: a borderless glass panel (separation comes from the
+        # player-bar hairline at the top and the content margin) — only the
+        # window-chrome left radii are kept.
         self.setStyleSheet(f"""
         QFrame#Sidebar {{
             background: {panel};
-            border-right: 1px solid {border};
+            border: none;
             border-top-left-radius: {radius}px;
             border-bottom-left-radius: {radius}px;
         }}
-        QLabel#SidebarTitle {{ color: transparent; border: none; }}
         """)
         for row in self.rows.values():
             row.set_theme(t, collapsed)

@@ -1,4 +1,26 @@
-# RELEASE_CHECKLIST — Golden Music v3.1.0
+# RELEASE_CHECKLIST — Golden Music
+
+## v3.2.0 — Nuvx visual accuracy + first Linux release (2026-11-21)
+
+- [x] User's 12-file Nuvx UI rewrite grafted onto the 3.1.0 base
+      (method-level three-way merge — 3.1 machinery preserved)
+- [x] Linux release machinery: release-linux job (ubuntu-latest),
+      ci.yml dual matrix, cross-platform build_release.py
+- [x] Version sources synchronized (version.py, iss default, README
+      badge/links, INSTALLATION, CHANGELOG 3.2.0 section, RELEASE_NOTES)
+      — version-sync 10/10
+- [x] Commit v3.2.0 on main; annotated tag v3.2.0
+- [ ] Push main + tag v3.2.0 (blocked: sandbox credential loss —
+      needs GitHub PAT or a push from the user's clone)
+- [ ] Release workflow green (windows-latest: tests → Bandit →
+      PyInstaller → Inno Setup → portable zip → SHA-256 → smoke test →
+      GitHub release; then ubuntu-latest: suite → Bandit → tar.gz →
+      SHA-256 → upload into the release)
+- [ ] Release artifacts verified (GoldenMusicSetup-3.2.0.exe + .sha256,
+      GoldenMusic-3.2.0-portable.zip, GoldenMusic-3.2.0-linux-x86_64.tar.gz
+      + .sha256)
+
+## v3.1.0 — remediation release (2026-11-20, closed)
 
 - [x] All Critical/High findings fixed (BUG_TRACKER.md — 15/15, Medium 4/6,
       2 documented blockers)

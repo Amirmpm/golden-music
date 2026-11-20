@@ -20,104 +20,39 @@ from __future__ import annotations
 
 from collections import OrderedDict
 
-from PyQt6.QtCore import (Qt, pyqtSignal, QSize, QPoint, QThread, QMutex,
-                          QWaitCondition)
-from PyQt6.QtGui import QPixmap, QImage, QPainter, QColor, QPainterPath
+from PyQt6.QtCore import (Qt, pyqtSignal, QSize, QPoint, QRect,
+                          QThread, QMutex, QWaitCondition,
+                          QPropertyAnimation, QEasingCurve)
+from PyQt6.QtGui import (QPixmap, QImage, QPainter, QColor, QPainterPath,
+                          QPen, QIcon)
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                               QPushButton, QFrame, QScrollArea, QSizePolicy,
-                              QMenu)
+                              QMenu, QToolButton)
 
 import coverart
+from icons import Icon, render_icon
 
-TILE = 168          # square tile px (>= Nuvx minimum 144)
+TILE = 168          # default square tile px (>= Nuvx minimum 144)
 GAP = 20
 CARD_RADIUS = 8
 
 
-# ---------------------------------------------------------------------------
-# Async cover loader (bounded, off the GUI thread)
-# ---------------------------------------------------------------------------
-
-class HomeCoverLoader(QThread):
-    """Bounded cover-art worker for Home cards.
-
-    Disk access (mutagen reads) AND image decoding run here — QImage is
-    safe to build off the GUI thread (QPixmap is NOT); the GUI-side slot
-    only wraps the finished QImage. v3.0 ran up to ~70 sequential reads +
-    decodes synchronously inside one rebuild, freezing the UI on a cold
-    cache. Deduplicates requests; a rebuild cancels pending ones.
-    """
-
-    covers_ready = pyqtSignal(list)              # [(path, QImage)]
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._queue: list = []
-        self._queued = set()
-        self._mutex = QMutex()
-        self._wake = QWaitCondition()
-        self._running = True
-
-    def request(self, path: str, size: int = TILE):
-        if not path:
-            return
-        self._mutex.lock()
+def _qcolor(value, fallback: str = "#000000") -> QColor:
+    """QColor from a theme value. ``QColor()`` cannot parse float-alpha
+    ``rgba()`` strings, which the Liquid Glass theme uses everywhere."""
+    s = str(value or "").strip()
+    if s.startswith("rgba(") or s.startswith("rgb("):
         try:
-            if path not in self._queued:
-                self._queued.add(path)
-                self._queue.append((path, size))
-                self._wake.wakeAll()
-        finally:
-            self._mutex.unlock()
-
-    def cancel_all(self):
-        """Drop pending requests (page rebuild — old cards are gone)."""
-        self._mutex.lock()
-        try:
-            self._queue.clear()
-            self._queued.clear()
-        finally:
-            self._mutex.unlock()
-
-    def stop_and_join(self):
-        self._mutex.lock()
-        try:
-            self._running = False
-            self._wake.wakeAll()
-        finally:
-            self._mutex.unlock()
-        self.wait(3000)
-
-    def run(self):
-        while True:
-            item = None
-            self._mutex.lock()
-            try:
-                while self._running and not self._queue:
-                    self._wake.wait(self._mutex, 500)
-                if not self._running:
-                    return
-                if self._queue:
-                    item = self._queue.pop(0)
-            finally:
-                self._mutex.unlock()
-            if item is None:
-                continue
-            path, size = item
-            try:
-                data = coverart.get_cover_bytes(path)
-            except Exception:
-                data = None
-            if not data:
-                continue
-            img = QImage()
-            if not img.loadFromData(data):
-                continue
-            img = img.scaled(
-                size, size,
-                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                Qt.TransformationMode.SmoothTransformation)
-            self.covers_ready.emit([(path, img)])
+            parts = [p.strip() for p in s[s.find("(") + 1:s.rfind(")")]
+                     .split(",")]
+            r, g, b = (int(float(parts[0])), int(float(parts[1])),
+                       int(float(parts[2])))
+            a = float(parts[3]) if len(parts) > 3 else 1.0
+            return QColor(r, g, b, max(0, min(255, int(a * 255))))
+        except Exception:
+            return QColor(fallback)
+    c = QColor(s)
+    return c if c.isValid() else QColor(fallback)
 
 
 # ---------------------------------------------------------------------------
@@ -160,47 +95,118 @@ def _album_meta(path: str, tags: dict):
 # Card widget
 # ---------------------------------------------------------------------------
 
+class RoundCover(QLabel):
+    """Cover label that clips its pixmap to the card radius.
+
+    A plain QLabel's QSS ``border-radius`` does NOT clip pixmap content, so
+    without this the artwork renders with square corners over a rounded
+    border."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._radius = CARD_RADIUS
+        self._border = "rgba(255,255,255,0.14)"
+
+    def set_round(self, radius: int, border):
+        radius = int(radius)
+        if radius != self._radius or border != self._border:
+            self._radius = radius
+            self._border = border
+            self.update()
+
+    def paintEvent(self, e):
+        pm = self.pixmap()
+        if pm is None or pm.isNull():
+            super().paintEvent(e)          # placeholder glyph / background
+            return
+        try:
+            p = QPainter(self)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            r = self._radius
+            path = QPainterPath()
+            path.addRoundedRect(0.5, 0.5, self.width() - 1,
+                                self.height() - 1, r, r)
+            p.setClipPath(path)
+            p.drawPixmap(0, 0, pm)
+            p.setClipping(False)
+            p.setPen(QPen(_qcolor(self._border, "#ffffff"), 1))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(0.5, 0.5, self.width() - 1,
+                              self.height() - 1, r, r)
+            p.end()
+        except Exception:
+            super().paintEvent(e)
+
+
 class Card(QFrame):
-    """One artwork card. Click = play collection; hover shows a play
-    overlay; right-click opens the Nuvx-style context menu."""
+    """One artwork card in the Nuvx feed-tile shape: ``w x (w + 58)``,
+    14.5/13 typography, hover scrim + bottom-right play affordance.
+
+    Click = play collection (behaviour preserved); right-click opens the
+    existing context menu."""
 
     activated = pyqtSignal(object)            # HomeItem
     context_requested = pyqtSignal(object, QPoint)
+
+    MIN_TILE = 144
+    MAX_TILE = 240
+    TEXT_H = 58                       # Nuvx: height = width + 58
 
     def __init__(self, item: HomeItem, theme: dict, parent=None, page=None):
         super().__init__(parent)
         self.item = item
         self.theme = dict(theme or {})
         self.page = page              # HomePage back-ref for async covers
-        self.setFixedSize(TILE, TILE + 46)
+        self._tile = TILE
+        self._cover_src: QPixmap | None = None
+        self._play_base = QPoint(TILE - 58, TILE - 58)
+        self._slide = None
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(6)
 
-        self.cover = QLabel()
-        self.cover.setFixedSize(TILE, TILE)
+        self.cover = RoundCover(self)
         self.cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lay.addWidget(self.cover)
+        self.scrim = QLabel(self)            # dark wash over the art (hover)
+        self.title = QLabel(item.title, self)
+        self.title.setWordWrap(True)
+        self.subtitle = QLabel(item.subtitle, self)
 
-        self.title = QLabel(item.title)
-        self.title.setWordWrap(False)
-        lay.addWidget(self.title)
-        self.subtitle = QLabel(item.subtitle)
-        lay.addWidget(self.subtitle)
-
-        self.play_overlay = QPushButton()
+        self.play_overlay = QPushButton(self)
         self.play_overlay.setFixedSize(44, 44)
-        self.play_overlay.setParent(self)
-        self.play_overlay.move((TILE - 44) // 2, (TILE - 44) // 2)
         self.play_overlay.setCursor(Qt.CursorShape.PointingHandCursor)
         self.play_overlay.setToolTip("Play")
         self.play_overlay.setVisible(False)
         self.play_overlay.clicked.connect(
             lambda: self.activated.emit(self.item))
+
         self.set_theme(self.theme)
         self._load_cover()
+        self.setFixedSize(TILE, TILE + self.TEXT_H)
 
+    # -- geometry -------------------------------------------------------
+    def set_tile_width(self, w: int):
+        """Responsive tile width (Nuvx feed_tile: 144..240)."""
+        w = max(self.MIN_TILE, min(self.MAX_TILE, int(w)))
+        if w == self._tile:
+            return
+        self._tile = w
+        self.setFixedSize(w, w + self.TEXT_H)   # → resizeEvent → _place()
+        self._render_cover()
+
+    def resizeEvent(self, e):
+        self._place()
+        super().resizeEvent(e)
+
+    def _place(self):
+        w = self._tile
+        self.cover.setGeometry(0, 0, w, w)
+        self.scrim.setGeometry(0, 0, w, w)
+        self.title.setGeometry(0, w + 4, w, 38)
+        self.subtitle.setGeometry(0, w + 42, w, 16)
+        self._play_base = QPoint(w - 58, w - 58)
+        if self.play_overlay.isVisible():
+            self.play_overlay.move(self._play_base)
+
+    # -- artwork --------------------------------------------------------
     def _load_cover(self):
         """Immediate placeholder, then async fill: NO disk I/O on the GUI
         thread (v3.0 did a synchronous mutagen read + decode per card)."""
@@ -216,70 +222,131 @@ class Card(QFrame):
         self.set_cover(None)
 
     def set_cover(self, pm: QPixmap | None):
+        self._cover_src = pm
+        self._render_cover()
+
+    def _render_cover(self):
+        pm = self._cover_src
         if pm is None or pm.isNull():
+            self.cover.setPixmap(QPixmap())
             self.cover.setText("♪")
             self.cover.setStyleSheet("font-size: 42px;")
-        else:
-            # single scale: the async loader already delivers TILE-sized
-            # images (v3.0 scaled 192 then 168 — two resamples per card)
-            if pm.width() != TILE or pm.height() != TILE:
-                pm = pm.scaled(
-                    TILE, TILE,
-                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                    Qt.TransformationMode.SmoothTransformation)
-            self.cover.setPixmap(pm)
-        self._style()
+            return
+        self.cover.setText("")
+        side = max(1, self._tile)
+        scaled = pm.scaled(
+            side, side,
+            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            Qt.TransformationMode.SmoothTransformation)
+        # centre-crop so wide/tall art never shifts the composition
+        cw, ch = scaled.width(), scaled.height()
+        x, y = (cw - side) // 2, (ch - side) // 2
+        self.cover.setPixmap(scaled.copy(max(0, x), max(0, y), side, side))
 
+    # -- theme ----------------------------------------------------------
     def set_theme(self, theme: dict):
         self.theme = dict(theme or {})
-        self._style()
-
-    def _style(self):
         t = self.theme
-        accent = t.get("gold", "#e9b957")
         text = t.get("text", "#f2f0f5")
         muted = t.get("muted", "#b2acba")
-        border = t.get("border", "rgba(255,255,255,0.14)")
-        hover = t.get("glass_hover", "rgba(255,255,255,0.2)")
-        self.title.setStyleSheet(f"color: {text}; font-size: 13px; "
+        border = t.get("glass_border",
+                       t.get("border", "rgba(255,255,255,0.14)"))
+        fill = t.get("glass_fill", "rgba(255,255,255,0.06)")
+        radius = int((t.get("lg") or {}).get("radius_card", CARD_RADIUS))
+        self.title.setStyleSheet(f"color: {text}; font-size: 14.5px; "
                                  f"font-weight: 600; background: transparent;")
-        self.subtitle.setStyleSheet(f"color: {muted}; font-size: 11px; "
+        self.subtitle.setStyleSheet(f"color: {muted}; font-size: 13px; "
                                     f"background: transparent;")
-        self.cover.setStyleSheet(f"""
-            QLabel {{
-                background: {t.get('glass_fill', 'rgba(255,255,255,0.06)')};
-                border-radius: {CARD_RADIUS}px;
-                border: 1px solid {border};
-                color: {muted};
-            }}
-        """)
-        self.setStyleSheet(f"""
-            QFrame {{
-                background: transparent;
-                border: none;
-                border-radius: {CARD_RADIUS}px;
-            }}
-            QFrame:hover {{ background: {hover}; }}
-        """)
-        self.play_overlay.setStyleSheet(f"""
-            QPushButton {{
-                border-radius: 22px;
-                background: {accent};
-                border: none;
-                color: {'#111' if t.get('is_dark', True) else '#fff'};
-                font-size: 18px;
-                font-weight: 700;
-            }}
-        """)
-        self.play_overlay.setText("▶")
+        self.cover.setStyleSheet(
+            f"QLabel {{ background: {fill}; color: {muted}; "
+            f"font-size: 42px; }}")
+        self.cover.set_round(radius, border)
+        self.scrim.setStyleSheet(
+            "background: rgba(0,0,0,0.28); border: none; "
+            f"border-radius: {radius}px;")
+        self.scrim.setVisible(self.play_overlay.isVisible())
+        # Nuvx: translucent dark circle + white glyph (never a gold fill)
+        self.play_overlay.setStyleSheet(
+            "QPushButton { border-radius: 22px; background: rgba(0,0,0,0.62);"
+            " border: none; }"
+            "QPushButton:hover { background: rgba(0,0,0,0.78); }")
+        glyph = render_icon(Icon.PLAY, 16, "rgba(255,255,255,0.95)")
+        self.play_overlay.setIcon(QIcon(glyph))
+        self.play_overlay.setIconSize(QSize(16, 16))
+        self.setStyleSheet("QFrame { background: transparent; border: none; }")
 
+    # -- hover affordance ----------------------------------------------
     def enterEvent(self, e):
-        self.play_overlay.setVisible(True)
+        self._show_play()
         super().enterEvent(e)
 
     def leaveEvent(self, e):
-        self.play_overlay.setVisible(False)
+        self._hide_play()
         super().leaveEvent(e)
+
+    def _show_play(self):
+        self.scrim.setVisible(True)
+        self.play_overlay.setVisible(True)
+        dur = int((self.theme.get("lg") or {}).get("anim_ms_fast", 150) or 0)
+        target = self._play_base
+        if dur <= 0:
+            if self._slide is not None:
+                self._slide.stop()
+            self.play_overlay.move(target)
+            return
+        if self._slide is not None:
+            self._slide.stop()
+        start = QPoint(target.x(), target.y() + 8)
+        self.play_overlay.move(start)
+        anim = QPropertyAnimation(self.play_overlay, b"pos", self)
+        anim.setDuration(dur)
+        anim.setStartValue(start)
+        anim.setEndValue(target)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.start()
+        self._slide = anim
+
+    def _hide_play(self):
+        if self._slide is not None:
+            self._slide.stop()
+        self.scrim.setVisible(False)
+        self.play_overlay.setVisible(False)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.activated.emit(self.item)
+        elif e.button() == Qt.MouseButton.RightButton:
+            self.context_requested.emit(self.item, self.mapToGlobal(e.pos()))
+        self._hide_play()
+        super().leaveEvent(e)
+
+    def _show_play(self):
+        self.scrim.setVisible(True)
+        self.play_overlay.setVisible(True)
+        dur = int((self.theme.get("lg") or {}).get("anim_ms_fast", 150) or 0)
+        target = self._play_base
+        if dur <= 0:
+            if self._slide is not None:
+                self._slide.stop()
+            self.play_overlay.move(target)
+            return
+        if self._slide is not None:
+            self._slide.stop()
+        start = QPoint(target.x(), target.y() + 8)
+        self.play_overlay.move(start)
+        anim = QPropertyAnimation(self.play_overlay, b"pos", self)
+        anim.setDuration(dur)
+        anim.setStartValue(start)
+        anim.setEndValue(target)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.start()
+        self._slide = anim
+
+    def _hide_play(self):
+        if self._slide is not None:
+            self._slide.stop()
+        self.scrim.setVisible(False)
+        self.play_overlay.setVisible(False)
 
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
@@ -287,17 +354,14 @@ class Card(QFrame):
         elif e.button() == Qt.MouseButton.RightButton:
             self.context_requested.emit(self.item, self.mapToGlobal(e.pos()))
 
-    def resizeEvent(self, e):
-        self.play_overlay.move((TILE - 44) // 2, (TILE - 44) // 2)
-        super().resizeEvent(e)
-
 
 # ---------------------------------------------------------------------------
 # Shelf
 # ---------------------------------------------------------------------------
 
 class Shelf(QWidget):
-    """Strapline + bold header + horizontal scrollable card row."""
+    """Strapline + bold header + horizontal card row with Nuvx-style
+    prev/next affordances (the scrollbar itself stays hidden)."""
 
     see_all_requested = pyqtSignal(str)
 
@@ -313,9 +377,23 @@ class Shelf(QWidget):
         self.strapline = QLabel(strapline.upper())
         lay.addWidget(self.strapline)
         head = QHBoxLayout()
+        head.setSpacing(6)
         self.header = QLabel(header)
         head.addWidget(self.header)
         head.addStretch(1)
+
+        # Nuvx shelf arrows — shown only while the row overflows
+        self.prev_btn = QToolButton()
+        self.next_btn = QToolButton()
+        for b in (self.prev_btn, self.next_btn):
+            b.setFixedSize(28, 28)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setVisible(False)
+        self.prev_btn.clicked.connect(lambda: self._scroll_by(-1))
+        self.next_btn.clicked.connect(lambda: self._scroll_by(1))
+        head.addWidget(self.prev_btn)
+        head.addWidget(self.next_btn)
+
         if see_all_key:
             self.see_all = QPushButton("See all")
             self.see_all.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -338,8 +416,7 @@ class Shelf(QWidget):
         self.scroll.setVerticalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.scroll.setFixedHeight(TILE + 52 + 12)
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         lay.addWidget(self.scroll)
         self.set_theme(self.theme)
 
@@ -349,12 +426,50 @@ class Shelf(QWidget):
     def count(self) -> int:
         return self.row_lay.count() - 1
 
+    # -- responsive layout ---------------------------------------------
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._relayout()
+
+    def _cards(self) -> list:
+        return [w for w in (self.row_lay.itemAt(i).widget()
+                            for i in range(self.row_lay.count()))
+                if isinstance(w, Card)]
+
+    def _relayout(self):
+        """Nuvx feed columns: 4 (<1260) / 5 (<1580) / 6, tile 144..240."""
+        cards = self._cards()
+        avail = max(160, self.scroll.viewport().width())
+        cols = 4 if avail < 1260 else (5 if avail < 1580 else 6)
+        w = (avail - (cols - 1) * GAP) // cols
+        w = max(Card.MIN_TILE, min(Card.MAX_TILE, w))
+        while w > Card.MIN_TILE and w * cols + (cols - 1) * GAP > avail:
+            w -= 4
+        for c in cards:
+            c.set_tile_width(w)
+        need = len(cards) * w + max(0, len(cards) - 1) * GAP
+        more = need > avail and len(cards) > 1
+        self.prev_btn.setVisible(more)
+        self.next_btn.setVisible(more)
+        height = w + Card.TEXT_H + 16           # scrollbar breathing room
+        if self.scroll.height() != height:
+            self.scroll.setFixedHeight(height)
+
+    def _scroll_by(self, direction: int):
+        sb = self.scroll.horizontalScrollBar()
+        step = max(160, int(self.scroll.viewport().width() * 0.6))
+        sb.setValue(sb.value() + direction * step)
+
+    # -- theme ----------------------------------------------------------
     def set_theme(self, theme: dict):
         self.theme = dict(theme or {})
         t = self.theme
         muted = t.get("muted", "#b2acba")
         text = t.get("text", "#f2f0f5")
-        accent = t.get("gold", "#e9b957")
+        border = t.get("glass_border",
+                       t.get("border", "rgba(255,255,255,0.14)"))
+        fill = t.get("glass_fill", "rgba(255,255,255,0.06)")
+        hover = t.get("glass_hover", "rgba(255,255,255,0.14)")
         self.strapline.setStyleSheet(
             f"color: {muted}; font-size: 11.5px; font-weight: 600; "
             f"letter-spacing: 1.2px; background: transparent;")
@@ -362,18 +477,30 @@ class Shelf(QWidget):
             f"color: {text}; font-size: 21px; font-weight: 700; "
             f"background: transparent;")
         if self.see_all is not None:
-            self.see_all.setStyleSheet(
-                f"color: {accent}; background: transparent; border: none; "
-                f"font-size: 13px; font-weight: 600;")
+            # neutral ghost pill — gold stays reserved for real state
+            self.see_all.setStyleSheet(f"""
+                QPushButton {{
+                    color: {text}; background: transparent;
+                    border: 1px solid {border}; border-radius: 14px;
+                    padding: 4px 14px; font-size: 12px; font-weight: 600;
+                }}
+                QPushButton:hover {{ background: {fill}; }}
+            """)
+        arrow_css = f"""
+            QToolButton {{ background: {fill}; border: none;
+                           border-radius: 14px; }}
+            QToolButton:hover {{ background: {hover}; }}
+        """
+        self.prev_btn.setStyleSheet(arrow_css)
+        self.next_btn.setStyleSheet(arrow_css)
+        self.prev_btn.setIcon(QIcon(render_icon(Icon.CHEVRON_LEFT, 16, text)))
+        self.next_btn.setIcon(QIcon(render_icon(Icon.CHEVRON_RIGHT, 16, text)))
+        self.prev_btn.setIconSize(QSize(16, 16))
+        self.next_btn.setIconSize(QSize(16, 16))
         self.scroll.setStyleSheet("""
             QScrollArea { background: transparent; border: none; }
-            QScrollBar:horizontal {
-                height: 6px; background: transparent; border-radius: 3px;
-            }
-            QScrollBar::handle:horizontal {
-                background: rgba(255,255,255,0.18); border-radius: 3px;
-                min-width: 24px;
-            }
+            QScrollBar:horizontal { height: 0; background: transparent; }
+            QScrollBar::handle:horizontal { background: transparent; }
             QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
                 width: 0; height: 0;
             }
@@ -419,10 +546,10 @@ class HomePage(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 8, 0)
         lay.setSpacing(18)
+        # One heading only: MainWindow hides the global toolbar + page title
+        # on Home (Nuvx shows a single Bold 34 page title).
         self.title = QLabel("Home")
         lay.addWidget(self.title)
-        self.subtitle = QLabel("Your local music")
-        lay.addWidget(self.subtitle)
 
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
@@ -430,8 +557,8 @@ class HomePage(QWidget):
             Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.body = QWidget()
         self.body_lay = QVBoxLayout(self.body)
-        self.body_lay.setContentsMargins(0, 0, 0, 24)
-        self.body_lay.setSpacing(22)
+        self.body_lay.setContentsMargins(0, 0, 0, 96)   # Nuvx page bottom
+        self.body_lay.setSpacing(26)                    # shelf-to-shelf rhythm
         self.body_lay.addStretch(1)
         self.scroll.setWidget(self.body)
         lay.addWidget(self.scroll, 1)
@@ -458,9 +585,6 @@ class HomePage(QWidget):
         self.title.setStyleSheet(
             f"color: {t.get('text', '#f2f0f5')}; font-size: 34px; "
             f"font-weight: 700; background: transparent;")
-        self.subtitle.setStyleSheet(
-            f"color: {t.get('muted', '#b2acba')}; font-size: 13px; "
-            f"background: transparent;")
         accent = t.get("gold", "#e9b957")
         self.empty_btn.setStyleSheet(f"""
             QPushButton {{
@@ -658,3 +782,120 @@ class HomePage(QWidget):
             m.addAction("View track information",
                         lambda: self.track_info_requested.emit(item))
         m.exec(global_pos)
+        if item.kind in ("track", "album"):
+            m.addAction("Open album", lambda: self.open_album_requested.emit(item))
+        if item.kind in ("track", "artist"):
+            m.addAction("Open artist",
+                        lambda: self.open_artist_requested.emit(item))
+        if item.kind == "track":
+            m.addAction("View track information",
+                        lambda: self.track_info_requested.emit(item))
+        m.exec(global_pos)
+class HomeCoverLoader(QThread):
+    """Bounded cover-art worker for Home cards.
+
+    Disk access (mutagen reads) AND image decoding run here — QImage is
+    safe to build off the GUI thread (QPixmap is NOT); the GUI-side slot
+    only wraps the finished QImage. v3.0 ran up to ~70 sequential reads +
+    decodes synchronously inside one rebuild, freezing the UI on a cold
+    cache. Deduplicates requests; a rebuild cancels pending ones.
+    """
+
+    covers_ready = pyqtSignal(list)              # [(path, QImage)]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._queue: list = []
+        self._queued = set()
+        self._mutex = QMutex()
+        self._wake = QWaitCondition()
+        self._running = True
+
+    def request(self, path: str, size: int = TILE):
+        if not path:
+            return
+        self._mutex.lock()
+        try:
+            if path not in self._queued:
+                self._queued.add(path)
+                self._queue.append((path, size))
+                self._wake.wakeAll()
+        finally:
+            self._mutex.unlock()
+
+    def cancel_all(self):
+        """Drop pending requests (page rebuild — old cards are gone)."""
+        self._mutex.lock()
+        try:
+            self._queue.clear()
+            self._queued.clear()
+        finally:
+            self._mutex.unlock()
+
+    def stop_and_join(self):
+        self._mutex.lock()
+        try:
+            self._running = False
+            self._wake.wakeAll()
+        finally:
+            self._mutex.unlock()
+        self.wait(3000)
+
+    def run(self):
+        while True:
+            item = None
+            self._mutex.lock()
+            try:
+                while self._running and not self._queue:
+                    self._wake.wait(self._mutex, 500)
+                if not self._running:
+                    return
+                if self._queue:
+                    item = self._queue.pop(0)
+            finally:
+                self._mutex.unlock()
+            if item is None:
+                continue
+            path, size = item
+            try:
+                data = coverart.get_cover_bytes(path)
+            except Exception:
+                data = None
+            if not data:
+                continue
+            img = QImage()
+            if not img.loadFromData(data):
+                continue
+            img = img.scaled(
+                size, size,
+                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                Qt.TransformationMode.SmoothTransformation)
+            self.covers_ready.emit([(path, img)])
+    def shutdown(self):
+        """Coordinated shutdown (called from MainWindow.closeEvent)."""
+        try:
+            self._cover_loader.stop_and_join()
+        except Exception:
+            pass
+    def _on_covers_ready(self, batch):
+        """GUI thread: wrap finished QImages as pixmaps and deliver."""
+        for path, img in batch:
+            pm = QPixmap.fromImage(img)
+            self._pm_cache[path] = pm
+            while len(self._pm_cache) > self._COVER_CACHE_MAX:
+                self._pm_cache.popitem(last=False)
+            for card in self._cover_requests.pop(path, []):
+                try:
+                    card.set_cover(pm)
+                except RuntimeError:
+                    pass          # card's C++ object already deleted
+    def request_cover(self, card, path: str):
+        """Register a card for async fill (deduplicated per path)."""
+        self._cover_requests.setdefault(path, []).append(card)
+        self._cover_loader.request(path, TILE)
+    def cached_cover(self, path: str):
+        """Already-decoded TILE pixmap or None — zero I/O."""
+        pm = self._pm_cache.get(path)
+        if pm is not None:
+            self._pm_cache.move_to_end(path)   # LRU touch
+        return pm

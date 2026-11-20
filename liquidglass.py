@@ -59,6 +59,30 @@ def rgba(r, g, b, a: float) -> str:
     return f"rgba({int(_clamp(r,0,255))},{int(_clamp(g,0,255))},{int(_clamp(b,0,255))},{round(_clamp(a,0.0,1.0),3)})"
 
 
+def glass_alpha(base, alpha: float) -> str:
+    """Same RGB as ``base`` (an ``rgba()``/``rgb()`` theme glass colour)
+    re-authored at a fixed alpha 0..1.
+
+    Lets widgets use the exact Nuvx glass opacities (hover 0.10, selected
+    0.16, control-hover 0.14 …) while keeping the theme's own glass colour,
+    so dark and light themes both stay correct. Non-rgba input is returned
+    unchanged.
+    """
+    s = str(base or "").strip()
+    if not (s.startswith("rgba(") or s.startswith("rgb(")):
+        return base
+    inner = s[s.find("(") + 1:s.rfind(")")]
+    parts = [p.strip() for p in inner.split(",")]
+    if len(parts) < 3:
+        return base
+    try:
+        r, g, b = (int(float(parts[0])), int(float(parts[1])),
+                   int(float(parts[2])))
+    except ValueError:
+        return base
+    return rgba(r, g, b, alpha)
+
+
 def _lighten(hex_color: str, pct: float) -> str:
     rgb = hex_to_rgb(hex_color)
     if rgb is None:

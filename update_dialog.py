@@ -76,6 +76,11 @@ class UpdateCheckWorker(QThread):
         if self._cancelled:         # app is shutting down: emit nothing
             return
         self.finished_with.emit(result)
+        if self._cancelled:         # app is shutting down: emit nothing
+            return
+        self.finished_with.emit(result)
+    def cancel(self):
+        self._cancelled = True
 
 
 class _DownloadWorker(QThread):
@@ -105,7 +110,9 @@ class _DownloadWorker(QThread):
 
 
 class UpdateBanner(QPushButton):
-    """Small non-modal pill pinned above the player bar: 'Update to vX'."""
+    """Small non-modal pill pinned to the bottom-right of the window:
+    'Update to vX'. (The player bar moved to the top — Nuvx — so the old
+    "just above the player bar" anchor would now sit off-screen.)"""
 
     def __init__(self, main_window):
         super().__init__(main_window)
@@ -119,11 +126,11 @@ class UpdateBanner(QPushButton):
         t = self._mw.theme
         return (
             f"QPushButton {{ background: {t.get('panel_bg_2', '#2a2a2a')};"
-            f" color: {t.get('gold_light', '#e8c87a')};"
-            f" border: 1px solid {t.get('gold', '#c9a227')};"
-            f" border-radius: 12px; padding: 5px 12px; font-size: 12px;"
+            f" color: {t.get('text', '#f2f0f5')};"
+            f" border: 1px solid {t.get('border', 'rgba(255,255,255,0.14)')};"
+            f" border-radius: 14px; padding: 6px 14px; font-size: 12px;"
             f" font-weight: 600; }}"
-            f"QPushButton:hover {{ border: 1px solid {t.get('gold_light', '#e8c87a')}; }}")
+            f"QPushButton:hover {{ background: {t.get('active', '#333333')}; }}")
 
     def refresh_theme(self):
         self.setStyleSheet(self._style())
@@ -137,9 +144,8 @@ class UpdateBanner(QPushButton):
 
     def _reposition(self):
         mw = self._mw
-        pb = getattr(mw, "player_bar", None)
-        bottom = pb.geometry().top() - 8 if pb is not None else mw.height() - 60
-        self.move(mw.width() - self.width() - 20, max(8, bottom - self.height()))
+        self.move(mw.width() - self.width() - 20,
+                  mw.height() - self.height() - 20)
 
     def reposition_if_visible(self):
         if self.isVisible():

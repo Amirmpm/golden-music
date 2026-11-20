@@ -65,6 +65,7 @@ from icons import Icon, render_icon, make_icon, get_dpr
 from audio import AudioBackend
 from scanner import FolderScanner
 from settings_dialog import SettingsDialog
+from queue_panel import QueuePanel
 from mini_player import MiniPlayer
 from widgets import ClickableSlider
 from tray_menu import TrayMenuWidget
@@ -73,7 +74,6 @@ import coverart
 import ipc
 import updater
 from update_dialog import UpdateCheckWorker, UpdateBanner, UpdateDialog
-from queue_panel import QueuePanel
 from mediakeys import MediaKeyFilter
 
 # --- v3: Liquid Glass system, Nuvx Desktop shell, online music, downloads,
@@ -480,46 +480,75 @@ class CoverLabel(QLabel):
 # PlayerBar — seek bar at TOP, controls below
 # ============================================================================
 class PlayerBar(QFrame):
-    """Layout (2 rows):
-       Row 1 (top): [time_current] [========seek========] [time_total]
-       Row 2 (bottom): [cover|title|like] [stretch] [prev|play|next] [stretch] [shuffle|repeat|vol|more]
+    """Nuvx-style player bar: ONE 56 px row.
+
+       [prev|play|next · shuffle|repeat] … [ LCD — cover · title/artist ·
+       star, with a 2 px seek line along its bottom ] … [lyrics|vol|⋯]
+
+    The elapsed/total times live inside the LCD and swap with the artist
+    line while the pointer is over the frame (Nuvx behaviour). Every
+    attribute below is part of MainWindow's public surface (~70 call
+    sites) and must keep existing.
     """
+
+    LCD_H = 46
 
     def __init__(self, theme, parent=None):
         super().__init__(parent)
         self.setObjectName("PlayerBar")
         self.theme = theme
-        self.setFixedHeight(120)
+        self.setFixedHeight(56)
 
-        # ---- Top row: seek bar ----
+        # ---- Left: transport ---------------------------------------
+        self.prev_btn = IconButton(Icon.PREV, icon_size=20, button_size=32)
+        self.play_btn = QPushButton()
+        self.play_btn.setObjectName("PlayBtn")
+        self.play_btn.setFixedSize(36, 36)
+        self.play_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.play_btn._svg = Icon.PLAY
+        self._play_theme = None
+        self.next_btn = IconButton(Icon.NEXT, icon_size=20, button_size=32)
+        self.shuffle_btn = IconButton(Icon.SHUFFLE, icon_size=16, button_size=30)
+        self.shuffle_btn.setCheckable(True)
+        self.shuffle_btn.setToolTip("Shuffle")
+        self.repeat_btn = IconButton(Icon.REPEAT, icon_size=16, button_size=30)
+        self.repeat_btn.setCheckable(True)
+        self.repeat_btn.setToolTip("Repeat")
+
+        transport = QHBoxLayout()
+        transport.setContentsMargins(0, 0, 0, 0)
+        transport.setSpacing(2)
+        transport.addWidget(self.prev_btn)
+        transport.addWidget(self.play_btn)
+        transport.addWidget(self.next_btn)
+        transport.addSpacing(10)
+        transport.addWidget(self.shuffle_btn)
+        transport.addWidget(self.repeat_btn)
+        transport_w = QWidget()
+        transport_w.setLayout(transport)
+        transport_w.setSizePolicy(QSizePolicy.Policy.Fixed,
+                                  QSizePolicy.Policy.Fixed)
+
+        # ---- Center: the LCD ---------------------------------------
         self.time_current = QLabel("0:00")
         self.time_current.setObjectName("TimeLabel")
-        self.time_current.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-
-        self.seek_slider = ClickableSlider(Qt.Orientation.Horizontal)
-        self.seek_slider.setObjectName("SeekSlider")
-        self.seek_slider.setRange(0, 1000)
-        self.seek_slider.setValue(0)
-        self.seek_slider.setTracking(False)
-        self.seek_slider.setCursor(Qt.CursorShape.PointingHandCursor)
-
+        self.time_current.setAlignment(Qt.AlignmentFlag.AlignRight |
+                                       Qt.AlignmentFlag.AlignVCenter)
         self.time_total = QLabel("0:00")
         self.time_total.setObjectName("TimeLabel")
-        self.time_total.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.time_total.setAlignment(Qt.AlignmentFlag.AlignLeft |
+                                     Qt.AlignmentFlag.AlignVCenter)
+        self.time_row = QWidget()
+        time_lay = QHBoxLayout(self.time_row)
+        time_lay.setContentsMargins(0, 0, 0, 0)
+        time_lay.setSpacing(8)
+        time_lay.addWidget(self.time_current)
+        time_lay.addWidget(self.time_total)
+        self.time_row.setVisible(False)          # shown on LCD hover
 
-        seek_row = QHBoxLayout()
-        seek_row.setContentsMargins(0, 0, 0, 0)
-        seek_row.setSpacing(10)
-        seek_row.addWidget(self.time_current)
-        seek_row.addWidget(self.seek_slider, 1)
-        seek_row.addWidget(self.time_total)
-        seek_w = QWidget()
-        seek_w.setLayout(seek_row)
-
-        # ---- Bottom row: controls ----
         self.cover_thumb = QLabel()
         self.cover_thumb.setObjectName("BarCover")
-        self.cover_thumb.setFixedSize(56, 56)
+        self.cover_thumb.setFixedSize(34, 34)
         self.cover_thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._cover_thumb_pm = None
         # Clicking the cover opens the fullscreen player, clicking the
@@ -535,119 +564,112 @@ class PlayerBar(QFrame):
         self.title_label.setObjectName("BarTitle")
         self.artist_label = MarqueeLabel("—")
         self.artist_label.setObjectName("BarArtist")
-        info_layout = QVBoxLayout()
-        info_layout.setContentsMargins(0, 0, 0, 0)
-        info_layout.setSpacing(2)
-        info_layout.addWidget(self.title_label)
-        info_layout.addWidget(self.artist_label)
-        info_widget = QWidget()
-        info_widget.setLayout(info_layout)
-        info_widget.setMinimumWidth(140)
-        info_widget.setMaximumWidth(200)
         for lbl in (self.title_label, self.artist_label):
             lbl.setCursor(Qt.CursorShape.PointingHandCursor)
             lbl.mousePressEvent = self._on_info_click
-        info_widget.setToolTip("Track info")
 
-        self.like_btn = IconButton(Icon.HEART, icon_size=18, button_size=32)
+        sub_row = QHBoxLayout()
+        sub_row.setContentsMargins(0, 0, 0, 0)
+        sub_row.setSpacing(0)
+        sub_row.addWidget(self.artist_label, 1)
+        sub_row.addWidget(self.time_row)
 
-        left_layout = QHBoxLayout()
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(10)
-        left_layout.addWidget(self.cover_thumb)
-        left_layout.addWidget(info_widget)
-        left_layout.addWidget(self.like_btn)
-        left_w = QWidget()
-        left_w.setLayout(left_layout)
-        left_w.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        text_col = QVBoxLayout()
+        text_col.setContentsMargins(0, 0, 0, 0)
+        text_col.setSpacing(0)
+        text_col.addWidget(self.title_label)
+        text_col.addLayout(sub_row)
 
-        # Center: prev + play + next
-        self.prev_btn = IconButton(Icon.PREV, icon_size=22, button_size=36)
-        self.play_btn = QPushButton()
-        self.play_btn.setObjectName("PlayBtn")
-        self.play_btn.setFixedSize(56, 56)
-        self.play_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.play_btn._svg = Icon.PLAY
-        self._play_theme = None
-        self.next_btn = IconButton(Icon.NEXT, icon_size=22, button_size=36)
+        self.like_btn = IconButton(Icon.HEART, icon_size=16, button_size=30)
 
-        center_layout = QHBoxLayout()
-        center_layout.setContentsMargins(0, 0, 0, 0)
-        center_layout.setSpacing(12)
-        center_layout.addWidget(self.prev_btn)
-        center_layout.addWidget(self.play_btn)
-        center_layout.addWidget(self.next_btn)
-        center_w = QWidget()
-        center_w.setLayout(center_layout)
-        center_w.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        lcd_row = QHBoxLayout()
+        lcd_row.setContentsMargins(0, 0, 0, 0)
+        lcd_row.setSpacing(9)
+        lcd_row.addWidget(self.cover_thumb)
+        lcd_row.addLayout(text_col, 1)
+        lcd_row.addWidget(self.like_btn)
 
-        # Right: shuffle + lyrics + repeat + vol + ⋯ menu
-        self.shuffle_btn = IconButton(Icon.SHUFFLE, icon_size=18, button_size=32)
-        self.shuffle_btn.setCheckable(True)
-        # Lyrics toggle
-        self.lyrics_btn = IconButton(Icon.LYRICS, icon_size=18, button_size=32)
+        self.seek_slider = ClickableSlider(Qt.Orientation.Horizontal)
+        self.seek_slider.setObjectName("SeekSlider")
+        self.seek_slider.setRange(0, 1000)
+        self.seek_slider.setValue(0)
+        self.seek_slider.setTracking(False)
+        self.seek_slider.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.seek_slider.setFixedHeight(5)
+
+        # The LCD panel — a glass capsule holding the now-playing info.
+        self.lcd = QFrame()
+        self.lcd.setObjectName("LcdFrame")
+        self.lcd.setFixedHeight(self.LCD_H)
+        self.lcd.setSizePolicy(QSizePolicy.Policy.Expanding,
+                               QSizePolicy.Policy.Fixed)
+        self.lcd.setMinimumWidth(260)
+        self.lcd.setMaximumWidth(560)
+        # Hovering the LCD swaps the artist line for elapsed / total time.
+        self.lcd.enterEvent = self._on_lcd_enter
+        self.lcd.leaveEvent = self._on_lcd_leave
+
+        lcd_lay = QVBoxLayout(self.lcd)
+        lcd_lay.setContentsMargins(10, 3, 10, 2)
+        lcd_lay.setSpacing(1)
+        lcd_lay.addLayout(lcd_row)
+        lcd_lay.addWidget(self.seek_slider)
+
+        # ---- Right: secondary controls -----------------------------
+        self.lyrics_btn = IconButton(Icon.LYRICS, icon_size=16, button_size=30)
         self.lyrics_btn.setCheckable(True)
         self.lyrics_btn.setToolTip("Lyrics")
-        self.repeat_btn = IconButton(Icon.REPEAT, icon_size=18, button_size=32)
-        self.repeat_btn.setCheckable(True)
-        self.vol_btn = IconButton(Icon.VOLUME_HIGH, icon_size=18, button_size=28)
-        self.queue_btn = IconButton(Icon.QUEUE, icon_size=18, button_size=32)
+        self.queue_btn = IconButton(Icon.QUEUE, icon_size=16, button_size=30)
         self.queue_btn.setToolTip("Up Next (queue)")
         self.queue_btn.setCheckable(True)
+        self.vol_btn = IconButton(Icon.VOLUME_HIGH, icon_size=16, button_size=30)
         self.vol_slider = ClickableSlider(Qt.Orientation.Horizontal)
         self.vol_slider.setObjectName("VolSlider")
         self.vol_slider.setRange(0, 100)
         self.vol_slider.setValue(80)
-        self.vol_slider.setFixedWidth(80)
+        self.vol_slider.setFixedWidth(72)
+        self.vol_slider.setFixedHeight(8)
         self.vol_slider.set_smooth(True)
         self.vol_slider.setTracking(True)
         self.vol_slider.setCursor(Qt.CursorShape.PointingHandCursor)
         # Less-used actions live behind the ⋯ overflow menu:
         # A-B repeat, playback speed and track options.
-        self.more_btn = IconButton(Icon.ELLIPSIS, icon_size=18, button_size=32)
+        self.more_btn = IconButton(Icon.ELLIPSIS, icon_size=16, button_size=30)
         self.more_btn.setToolTip("More: A-B Repeat, Speed, Track options")
-        self.ab_btn = IconButton(Icon.REPEAT_ONE, icon_size=16, button_size=32)
+        self.ab_btn = IconButton(Icon.REPEAT_ONE, icon_size=16, button_size=30)
         self.ab_btn.setToolTip("A-B Repeat")
         self.ab_btn.setVisible(False)   # reachable from the ⋯ menu only
-        self.rate_btn = IconButton(Icon.SPEED, icon_size=16, button_size=32)
+        self.rate_btn = IconButton(Icon.SPEED, icon_size=16, button_size=30)
         self.rate_btn.setToolTip("Playback speed")
         self.rate_btn.setVisible(False)  # reachable from the ⋯ menu only
-        self.track_menu_btn = IconButton(Icon.LIST_LINES, icon_size=18, button_size=32)
+        self.track_menu_btn = IconButton(Icon.LIST_LINES, icon_size=16,
+                                         button_size=30)
         self.track_menu_btn.setToolTip("Track options")
 
         right_layout = QHBoxLayout()
         right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(6)
-        right_layout.addWidget(self.shuffle_btn)
+        right_layout.setSpacing(2)
         right_layout.addWidget(self.lyrics_btn)
-        right_layout.addWidget(self.repeat_btn)
         right_layout.addWidget(self.queue_btn)
+        right_layout.addSpacing(6)
         right_layout.addWidget(self.vol_btn)
         right_layout.addWidget(self.vol_slider)
-        right_layout.addSpacing(4)
+        right_layout.addSpacing(6)
+        right_layout.addWidget(self.track_menu_btn)
         right_layout.addWidget(self.more_btn)
         right_w = QWidget()
         right_w.setLayout(right_layout)
-        right_w.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        right_w.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
-        # Bottom row layout with center alignment
-        bottom_row = QHBoxLayout()
-        bottom_row.setContentsMargins(0, 0, 0, 0)
-        bottom_row.setSpacing(0)
-        bottom_row.addWidget(left_w, 1)
-        bottom_row.addStretch(1)
-        bottom_row.addWidget(center_w, 0)
-        bottom_row.addStretch(1)
-        bottom_row.addWidget(right_w, 1)
-        bottom_w = QWidget()
-        bottom_w.setLayout(bottom_row)
-
-        # Main layout (vertical: seek on top, controls below)
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(20, 8, 20, 10)
-        main_layout.setSpacing(6)
-        main_layout.addWidget(seek_w)
-        main_layout.addWidget(bottom_w)
+        # ---- The single row ----------------------------------------
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(14, 0, 14, 0)
+        main_layout.setSpacing(12)
+        main_layout.addWidget(transport_w)
+        main_layout.addStretch(1)
+        main_layout.addWidget(self.lcd, 1)
+        main_layout.addStretch(1)
+        main_layout.addWidget(right_w)
 
         self.set_theme(theme)
 
@@ -658,36 +680,36 @@ class PlayerBar(QFrame):
                     self.queue_btn, self.lyrics_btn, self.track_menu_btn,
                     self.more_btn, self.ab_btn, self.rate_btn]:
             btn.set_theme(theme)
-        # Play button icon (always window_bg color on gold background)
+        # Play button icon — glass button, so the glyph takes the text colour
         dpr = get_dpr()
-        pm = render_icon(self.play_btn._svg, 24, theme["window_bg"], dpr)
+        pm = render_icon(self.play_btn._svg, 18, theme["text"], dpr)
         self.play_btn.setIcon(QIcon(pm))
-        self.play_btn.setIconSize(QSize(24, 24))
+        self.play_btn.setIconSize(QSize(18, 18))
         self._play_theme = theme
         self._refresh_cover_thumb()
 
     def _refresh_cover_thumb(self):
         try:
             if self._cover_thumb_pm is not None and not self._cover_thumb_pm.isNull():
-                scaled = self._cover_thumb_pm.scaled(56, 56, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+                scaled = self._cover_thumb_pm.scaled(34, 34, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
                 side = min(scaled.width(), scaled.height())
                 x = (scaled.width() - side) // 2
                 y = (scaled.height() - side) // 2
                 self.cover_thumb.setPixmap(scaled.copy(x, y, side, side))
             else:
                 dpr = get_dpr()
-                pm = QPixmap(int(56 * dpr), int(56 * dpr))
+                pm = QPixmap(int(34 * dpr), int(34 * dpr))
                 pm.fill(Qt.GlobalColor.transparent)
                 painter = QPainter(pm)
                 painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-                grad = QLinearGradient(0, 0, 56 * dpr, 56 * dpr)
+                grad = QLinearGradient(0, 0, 34 * dpr, 34 * dpr)
                 grad.setColorAt(0.0, QColor(self.theme["gold_deep"]))
                 grad.setColorAt(1.0, QColor(self.theme["gold_light"]))
                 painter.setBrush(QBrush(grad))
                 painter.setPen(Qt.PenStyle.NoPen)
-                painter.drawRoundedRect(0, 0, int(56 * dpr), int(56 * dpr), 8 * dpr, 8 * dpr)
-                note_pm = render_icon(Icon.MUSIC_NOTE, int(28 * dpr), "rgba(26,20,16,140)", 1.0)
-                painter.drawPixmap(int(14 * dpr), int(14 * dpr), note_pm)
+                painter.drawRoundedRect(0, 0, int(34 * dpr), int(34 * dpr), 5 * dpr, 5 * dpr)
+                note_pm = render_icon(Icon.MUSIC_NOTE, int(17 * dpr), "rgba(26,20,16,140)", 1.0)
+                painter.drawPixmap(int(8 * dpr), int(8 * dpr), note_pm)
                 painter.end()
                 pm.setDevicePixelRatio(dpr)
                 self.cover_thumb.setPixmap(pm)
@@ -719,6 +741,15 @@ class PlayerBar(QFrame):
                 and callable(self.info_click_handler)):
             self.info_click_handler()
 
+    def _on_lcd_enter(self, event):
+        """Nuvx: the LCD shows elapsed / total time while hovered."""
+        self.artist_label.setVisible(False)
+        self.time_row.setVisible(True)
+
+    def _on_lcd_leave(self, event):
+        self.time_row.setVisible(False)
+        self.artist_label.setVisible(True)
+
     def update_play_button(self, playing: bool):
         if playing:
             self.play_btn._svg = Icon.PAUSE
@@ -728,9 +759,9 @@ class PlayerBar(QFrame):
             self.play_btn.setToolTip("Play")
         if self._play_theme:
             dpr = get_dpr()
-            pm = render_icon(self.play_btn._svg, 24, self._play_theme["window_bg"], dpr)
+            pm = render_icon(self.play_btn._svg, 18, self._play_theme["text"], dpr)
             self.play_btn.setIcon(QIcon(pm))
-            self.play_btn.setIconSize(QSize(24, 24))
+            self.play_btn.setIconSize(QSize(18, 18))
 
     def update_like_button(self, liked: bool):
         if liked:
@@ -756,6 +787,20 @@ class PlayerBar(QFrame):
             self.repeat_btn.setChecked(True)
             self.repeat_btn.setToolTip("Repeat: All")
         else:
+            self.repeat_btn.set_svg(Icon.REPEAT_ONE)
+            self.repeat_btn.setChecked(True)
+            self.repeat_btn.setToolTip("Repeat: One")
+
+    def update_volume_button(self, vol: int):
+        if vol == 0:
+            self.vol_btn.set_svg(Icon.VOLUME_MUTE)
+            self.vol_btn.setToolTip("Unmute")
+        elif vol < 50:
+            self.vol_btn.set_svg(Icon.VOLUME_LOW)
+            self.vol_btn.setToolTip("Mute")
+        else:
+            self.vol_btn.set_svg(Icon.VOLUME_HIGH)
+            self.vol_btn.setToolTip("Mute")
             self.repeat_btn.set_svg(Icon.REPEAT_ONE)
             self.repeat_btn.setChecked(True)
             self.repeat_btn.setToolTip("Repeat: One")
@@ -892,7 +937,7 @@ class TrackRowDelegate(QStyledItemDelegate):
         self.theme = theme
 
     def sizeHint(self, option, index):
-        return QSize(0, 46)
+        return QSize(0, 56)
 
     def paint(self, painter: QPainter, option, index):
         raw = index.data(Qt.ItemDataRole.DisplayRole) or ""
@@ -919,8 +964,8 @@ class TrackRowDelegate(QStyledItemDelegate):
         p.save()
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
-        # Row background
-        radius = 10
+        # Row background — glass only, no frame (Nuvx track row)
+        radius = 8
         if selected:
             bg = QColor(t["active"])
             p.setPen(Qt.PenStyle.NoPen)
@@ -933,7 +978,7 @@ class TrackRowDelegate(QStyledItemDelegate):
             p.drawRoundedRect(rect, radius, radius)
 
         # Playing rows get a slim accent bar on the left edge — a clearer
-        # "now playing" cue than color alone (works in all 12 themes).
+        # "now playing" cue than color alone (accent = real state only).
         if playing:
             bar_w = 3
             bar_rect = QRect(rect.left() + 1, rect.top() + 8,
@@ -944,13 +989,12 @@ class TrackRowDelegate(QStyledItemDelegate):
             # shift content right so text never overlaps the bar
             rect = rect.adjusted(bar_w + 4, 0, 0, 0)
 
-        # Colors — playing/selected rows glow gold; others stay neutral
+        # Colors — selected/playing stay WHITE (Nuvx); only the index is accent.
         if playing or selected:
             num_col = QColor(t["gold"])
-            title_col = QColor(t["gold_light"])
         else:
             num_col = QColor(t["muted"])
-            title_col = QColor(t["text"])
+        title_col = QColor(t["text"])
 
         x_num = rect.left() + 8
         x_text = x_num + (34 if number else 0)
@@ -1648,6 +1692,7 @@ class TagLoaderThread(QThread):
                 fname = os.path.splitext(os.path.basename(path))[0]
                 title, artist, album = fname, "Unknown Artist", ""
             self.tag_loaded.emit(path, title, artist, album)
+            self.tag_loaded.emit(path, title, artist, album)
 
 
 # ============================================================================
@@ -2016,6 +2061,12 @@ class MainWindow(QMainWindow):
         self.scan_progress.setVisible(False)
         outer.addWidget(self.scan_progress)
 
+        # Player strip at the TOP of the window (Nuvx layout: the 56 px
+        # player bar doubles as the chrome row) — order:
+        # progress bar -> player strip -> sidebar/content.
+        self.player_bar = PlayerBar(self.theme)
+        outer.addWidget(self.player_bar)
+
         # Top area
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
@@ -2098,6 +2149,7 @@ class MainWindow(QMainWindow):
 
         top_row_w = QWidget()
         top_row_w.setLayout(top_row)
+        self.top_row_w = top_row_w
         self.main_layout.addWidget(top_row_w)
 
         # Stack — v3 Nuvx page order: Home (local library), Search (online),
@@ -2116,15 +2168,11 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(PAGE_HOME)
         self.current_view = View.HOME
         self.page_title.setText("Home")
+        self._sync_page_chrome()
 
-        # Player strip at the TOP of the window (Nuvx layout: the 56 px
-        # player bar doubles as the title area) — created before the
-        # content area so the root layout order becomes:
-        # progress bar -> player strip -> content.
-        self.player_bar = PlayerBar(self.theme)
+        # Player strip is created at the top of the root layout (above).
         top.addWidget(self.main_area, 1)
         outer.addLayout(top, 1)
-        outer.addWidget(self.player_bar)
 
         # Non-modal update badge — pinned above the player bar, bottom-right
         self._update_banner = UpdateBanner(self)
@@ -2727,7 +2775,7 @@ class MainWindow(QMainWindow):
         #   Ctrl+F search · Ctrl+M mini player · Ctrl+J jump to playing
         #   F11/F fullscreen · Esc leave fullscreen
         #   Ctrl+arrows: prev/next track · volume up/down
-        QShortcut(QKeySequence("Ctrl+F"), self, activated=lambda: self.search_edit.setFocus())
+        QShortcut(QKeySequence("Ctrl+F"), self, activated=self._focus_search)
         QShortcut(QKeySequence("Ctrl+M"), self, activated=self._toggle_mini_player)
         QShortcut(QKeySequence("Ctrl+J"), self, activated=self._jump_to_playing)
         QShortcut(QKeySequence("Ctrl+Left"), self, activated=self._on_prev)
@@ -3033,6 +3081,31 @@ class MainWindow(QMainWindow):
                 lst.scrollToItem(it, QListWidget.ScrollHint.PositionAtCenter)
                 break
 
+    def _sync_page_chrome(self):
+        """Nuvx: Home and Search own their page title — the global toolbar
+        row (title + search + sort + counts + actions) is hidden there so
+        there is exactly ONE heading on screen (QA BUG-001)."""
+        try:
+            idx = self.stack.currentIndex()
+            bare = idx in (PAGE_HOME, PAGE_SEARCH)
+            self.top_row_w.setVisible(not bare)
+            self.page_title.setVisible(not bare)
+        except Exception:
+            pass
+
+    def _focus_search(self):
+        """Ctrl+F: jump to Search (its own field) when the global toolbar
+        row is hidden, otherwise focus the toolbar search box."""
+        if self.stack.currentIndex() == PAGE_SEARCH:
+            self.search_page.field.setFocus()
+            self.search_page.field.selectAll()
+            return
+        if self.top_row_w.isVisibleTo(self):
+            self.search_edit.setFocus()
+            self.search_edit.selectAll()
+            return
+        self._on_rail_clicked("search")
+
     def _on_rail_clicked(self, key: str):
         # Sidebar exclusivity: only the active nav row stays checked.
         nav = {k: btn for k, btn in getattr(self.rail, "rows", {}).items()}
@@ -3093,6 +3166,7 @@ class MainWindow(QMainWindow):
             self._show_playlists()
         elif key == "mini":
             self._toggle_mini_player()
+        self._sync_page_chrome()
         # keep the sidebar playlist badge in sync after playlist changes
         try:
             self.rail.set_playlists(list(self.playlists))
@@ -5195,14 +5269,12 @@ class MainWindow(QMainWindow):
             pass
 
     def _position_toast(self):
-        """Center the toast above the player bar."""
+        """Center the toast near the bottom edge — the player bar moved to
+        the TOP of the window (Nuvx), so it can no longer anchor the toast."""
         lbl = getattr(self, "_toast_label", None)
         if lbl is None:
             return
-        bottom = self.height() - 96          # fallback: above the bottom edge
-        pb = getattr(self, "player_bar", None)
-        if pb is not None:
-            bottom = pb.geometry().top() - 12
+        bottom = self.height() - 96
         x = max(8, (self.width() - lbl.width()) // 2)
         y = max(8, bottom - lbl.height())
         lbl.move(x, y)
@@ -6676,6 +6748,314 @@ class MainWindow(QMainWindow):
                 self.player_bar.seek_slider.blockSignals(True)
                 self.player_bar.seek_slider.setValue(int(pos * 1000 / dur))
                 self.player_bar.seek_slider.blockSignals(False)
+        self.lyrics_offset_ms = self._validated_int(
+            cfg.get("lyrics_offset_ms", 0), 0, -5000, 5000)
+        self.proxy_url = str(cfg.get("proxy_url", "") or "")[:200]
+        self._apply_proxy_setting()
+        # keep the legacy theme name in sync for rollback compatibility
+        self.theme_name = Theme.normalize(cfg.get("theme", Theme.DEFAULT_NAME))
+        if self.theme_name not in Theme.names():
+            self.theme_name = Theme.DEFAULT_NAME
+        self.theme = Theme.get(self.theme_name)
+        self.library = cfg.get("library", [])
+        self.favorites = set(cfg.get("favorites", []))
+        self.added_folders = cfg.get("added_folders", [])
+        raw_pl = cfg.get("playlists", {})
+        if isinstance(raw_pl, dict):
+            self.playlists = {str(k): [p for p in v if isinstance(p, str)]
+                              for k, v in raw_pl.items()
+                              if isinstance(k, str) and isinstance(v, list)}
+        else:
+            self.playlists = {}
+        # Corrupt/tampered values must never abort the whole load — fall
+        # back to defaults per field (ValueError/TypeError safe).
+        vol = self._validated_int(cfg.get("volume", 80), 80, 0, 100)
+        self._last_volume = vol
+        self.player_bar.vol_slider.setValue(vol)
+        self.shuffle = bool(cfg.get("shuffle", False))
+        self.player_bar.update_shuffle_button(self.shuffle)
+        self.repeat_mode = self._validated_enum(
+            RepeatMode, cfg.get("repeat_mode", 0), RepeatMode.OFF)
+        self.player_bar.update_repeat_button(self.repeat_mode)
+        self.auto_rescan = cfg.get("auto_rescan", True)
+        self.remember_track = cfg.get("remember_track", True)
+        self.taskbar_close_to_tray = bool(cfg.get("taskbar_close_to_tray", False))
+        self.tray_notice_shown = bool(cfg.get("tray_notice_shown", False))
+        self.updates_enabled = bool(cfg.get("updates_enabled", True))
+        self.update_last_check = float(cfg.get("update_last_check", 0) or 0)
+        self.update_etag = str(cfg.get("update_etag", "") or "")
+        self.update_skip_version = str(cfg.get("update_skip_version", "") or "")
+        self.update_snooze_until = float(cfg.get("update_snooze_until", 0) or 0)
+        self.default_folder = cfg.get("default_folder", "")
+        sm = cfg.get("sort_mode", "title")
+        try:
+            self.sort_mode = SortMode(sm)
+        except ValueError:
+            self.sort_mode = SortMode.TITLE
+        # Settings-dialog fields — restore what _save_config persisted
+        self.lyrics_online_enabled = bool(cfg.get("lyrics_online", True))
+        self.audio_output_id = str(cfg.get("audio_output_id", "") or "")
+        self.auto_theme_enabled = bool(cfg.get("auto_theme", False))
+        self._toast_enabled = bool(cfg.get("toast_enabled", True))
+        self.visualizer_enabled = bool(cfg.get("visualizer_enabled", True))
+        self._last_volume = self._validated_int(cfg.get("default_volume", vol), vol, 0, 100)
+        if getattr(self, "fx", None):
+            self.fx.enabled_fade = bool(cfg.get("fade_enabled", True))
+            self.fx.fade_ms = self._validated_int(cfg.get("fade_ms", 300), 300, 100, 2000)
+        # Sleep timer is persisted so it survives restarts too
+        self.sleep_timer_minutes = self._validated_int(
+            cfg.get("sleep_timer_minutes", 30), 30, 1, 480)
+        if bool(cfg.get("sleep_timer_active", False)):
+            self.start_sleep_timer(self.sleep_timer_minutes)
+        # v3: propagate loaded glass settings into the running subsystems
+        try:
+            if self.download_manager is not None and self.download_folder:
+                self.download_manager.set_folder(Path(self.download_folder))
+                self.downloads_page.set_folder(Path(self.download_folder))
+            self.downloads_page.set_completed(self.downloads_history)
+            self.search_page.set_history(self.search_history)
+        except Exception as e:
+            log.debug(f"v3 post-load sync failed: {e}")
+        if hasattr(self, "sort_combo"):
+            idx = self.sort_combo.findData(sm)
+            if idx >= 0:
+                self.sort_combo.setCurrentIndex(idx)
+        geom_hex = cfg.get("geometry")
+        if geom_hex:
+            try:
+                self.restoreGeometry(bytes.fromhex(geom_hex))
+            except Exception:
+                pass
+        self._apply_theme()
+
+        # AUDIT FIX (offline-drive retention): same rule as the sync loader —
+        # persisted entries survive offline drives and REMAIN VISIBLE (so the
+        # user still sees their collection); playing a missing file simply
+        # raises the existing graceful audio-error skip.
+        # The stats seed at __init__ ran before added_folders was known —
+        # refresh moved-file search roots now that folders are populated.
+        try:
+            from playstats import set_search_roots
+            _roots = list(self.added_folders or [])
+            _roots += list({os.path.dirname(os.path.abspath(p))
+                            for p in self.library if p})
+            set_search_roots(_roots)
+        except Exception:
+            pass
+
+        # Rebuild list FAST (filenames only, no tag reading)
+        # Load tag cache first (instant — no I/O)
+        self._load_tag_cache()
+        self._rebuild_library_list()
+        self._rebuild_favorites_list()
+        self._update_count_label()
+        # v3 boot fix: _init_v3_systems() ran during __init__ while the
+        # library was still empty (config loads asynchronously AFTER that),
+        # so Home kept the empty "Add music folder" CTA on every real boot
+        # with a populated library. Rebuild the Home model now that the
+        # library + tag cache are actually loaded.
+        self._refresh_home()
+
+        # Restore last track (if any)
+        last = cfg.get("last_track")
+        last_pos = cfg.get("last_position", 0)
+        if last and last in self.library and self.remember_track:
+            idx = self.library.index(last)
+            self.current_playlist = list(self.library)
+            self.current_index = idx
+            self.current_track = last
+            # Use cached tags if available, otherwise filename
+            if last in self._tag_cache:
+                title, artist = self._tag_cache[last]
+            else:
+                title = os.path.splitext(os.path.basename(last))[0]
+                artist = "Unknown Artist"
+            self.now_title.setMarqueeText(title)
+            self.now_artist.setMarqueeText(artist)
+            self.player_bar.title_label.setMarqueeText(title)
+            self.player_bar.artist_label.setMarqueeText(artist)
+            self.player_bar.update_like_button(last in self.favorites)
+            self._highlight_playing_in_lists()
+            self._load_cover_async(last)
+            # Load media without playing (user can press play)
+            self.audio.load(last)
+            QTimer.singleShot(500, lambda: self._restore_position(last, last_pos))
+
+        # Start rescan in background
+        if self.auto_rescan:
+            QTimer.singleShot(100, self._startup_rescan)
+
+        # Apply restored UI toggles + audio output + auto-theme (all were
+        # persisted by _save_config; see FUNC-4 fix — these used to reset
+        # to defaults on every restart).
+        if hasattr(self, "player_bar"):
+            self.player_bar.ab_btn.setVisible(bool(cfg.get("show_ab_button", False)))
+            self.player_bar.rate_btn.setVisible(bool(cfg.get("show_rate_button", False)))
+            self.player_bar.lyrics_btn.setVisible(bool(cfg.get("show_lyrics_button", True)))
+        if self.audio_output_id:
+            try:
+                from audio_output import apply_output_device
+                apply_output_device(self.audio, self.audio_output_id)
+            except Exception as e:
+                log.warning(f"restored audio output unavailable: {e}")
+        if self.auto_theme_enabled:
+            self._apply_auto_theme_setting()
+
+        # Warm album groups + covers in the background so the Albums page is
+        # instant on first visit (user request: preload, keep, revisit fast).
+        # Smoke mode quits at 2500 ms — don't start a heavy worker at
+        # 1500 ms that would race the shutdown.
+        if not getattr(self, "_smoke", False):
+            QTimer.singleShot(1500, self._preload_albums_background)
+
+    def _restore_position(self, path, pos):
+        if self.current_track == path:
+            self.audio.set_position(pos)
+            self.player_bar.time_current.setText(fmt_time(pos))
+            dur = self.audio.duration()
+            if dur > 0:
+                # Block signals to prevent feedback loop
+                self.player_bar.seek_slider.blockSignals(True)
+                self.player_bar.seek_slider.setValue(int(pos * 1000 / dur))
+                self.player_bar.seek_slider.blockSignals(False)
+    @staticmethod
+    def _validated_float(value, default: float, lo: float, hi: float) -> float:
+        """Coerce a config value to a float in [lo, hi]; default on junk."""
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return default
+        return max(lo, min(hi, v))
+    def _home_open_album(self, item):
+        """'Open Album' on the SELECTED album — opens THAT album (its
+        tracks, in order, in the library view), exactly like double-clicking
+        the album in the Albums grid (v3.0 navigated to the generic albums
+        page ignoring the selection)."""
+        tracks = [p for p in item.paths if os.path.exists(p)]
+        if tracks:
+            self._play_from_list(tracks, 0, view=View.LIBRARY)
+    def _home_add_to_playlist(self, item):
+        """'Add to Playlist' on the SELECTED item — actually adds the
+        selected track (v3.0 opened the generic playlist manager and added
+        nothing)."""
+        from playlist_dialog import add_track_to_playlist_dialog
+        if item.paths:
+            add_track_to_playlist_dialog(self, item.paths[0])
+    def _layout_queue_panel(self):
+        qp = getattr(self, "queue_panel", None)
+        if qp is None:
+            return
+        try:
+            qp.adjustSize()
+            qp.move(max(0, self.width() - qp.width()), 130)
+        except Exception:
+            pass
+    def _refresh_queue_panel(self):
+        qp = getattr(self, "queue_panel", None)
+        if qp is not None and qp.isVisible():
+            qp.refresh()
+    def _toggle_queue_panel(self, checked=None):
+        qp = getattr(self, "queue_panel", None)
+        if qp is None:
+            return
+        if qp.isVisible():
+            qp.hide()
+        else:
+            self._refresh_queue_panel()
+            qp.show()
+            self._layout_queue_panel()
+        if hasattr(self, "player_bar"):
+            self.player_bar.queue_btn.setChecked(qp.isVisible())
+    def _shutdown_v3_workers(self):
+        """Idempotent, order-safe stop of the always-on v3 worker threads
+        (Home cover loader + download worker). Called from closeEvent's
+        force-quit branch AND atexit (tests and diagnostic paths never
+        reach closeEvent — an unjoined QThread aborts teardown)."""
+        if getattr(self, "_v3_shutdown_done", False):
+            return
+        self._v3_shutdown_done = True
+        try:
+            hp = getattr(self, "home_page", None)
+            if hp is not None and hasattr(hp, "shutdown"):
+                hp.shutdown()           # bounded cover-loader join
+        except Exception as e:
+            log.debug(f"home cover loader shutdown: {e}")
+        try:
+            dm = getattr(self, "download_manager", None)
+            if dm is not None:
+                dm.stop()                # persist + bounded join
+        except Exception as e:
+            log.debug(f"download manager shutdown: {e}")
+    def _reveal_download(self, path):
+        """Open the file's folder (Windows: explorer on the parent dir)."""
+        folder = os.path.dirname(str(path or "")) or \
+            (self.download_folder or str(self._default_download_dir()))
+        try:
+            from PyQt6.QtGui import QDesktopServices
+            from PyQt6.QtCore import QUrl
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+        except Exception as e:
+            log.warning(f"reveal download failed: {e}")
+    def _on_download_clear(self):
+        if self.download_manager is not None:
+            n = self.download_manager.clear_completed()
+            self._show_toast(
+                f"Cleared {n} finished download"
+                + ("s" if n != 1 else "") if n else "Nothing to clear")
+    def _on_download_remove(self, job_id):
+        if self.download_manager is not None:
+            self.download_manager.remove(int(job_id))
+    def _play_online_now(self, track):
+        """Search 'Play' — a single-track session over the unified queue."""
+        self.current_playlist = [track]
+        self.current_index = 0
+        self.play_history.clear()
+        self.redo_stack.clear()
+        self._play_online_track(track)
+    def _queue_add_end(self, track):
+        """Online 'Add to queue': append to the unified queue."""
+        if not self.current_playlist:
+            self._play_online_now(track)
+            return
+        self.current_playlist.append(track)
+        self._refresh_queue_panel()
+        self._show_toast(f"Added to queue: {track.title}")
+    def _queue_insert_next(self, track):
+        """Online 'Play next': insert right after the currently playing
+        entry — a LOCAL track may be playing; the online track becomes the
+        real next track (v3.0's separate online_queue never did)."""
+        if not self.current_playlist:
+            self._play_online_now(track)
+            return
+        idx = self.current_index + 1 if self.current_index >= 0 else 0
+        self.current_playlist.insert(min(idx, len(self.current_playlist)), track)
+        self._refresh_queue_panel()
+        self._show_toast(f"Playing next: {track.title}")
+    def _apply_proxy_setting(self):
+        """Install the persisted custom proxy (validated — an invalid URL
+        is refused with a warning and falls back to the system proxy)."""
+        try:
+            online_mod.set_proxy(str(getattr(self, "proxy_url", "") or ""))
+        except ValueError as e:
+            log.warning(f"saved proxy invalid (system proxy kept): {e}")
+            self.proxy_url = ""
+    def _lyrics_effective_ms(self, pos_ms: int) -> int:
+        """Apply the lyrics timing offset setting: positive values show
+        lines EARLIER (use when lyrics lag the music); negative values
+        show them later."""
+        try:
+            off = int(getattr(self, "lyrics_offset_ms", 0) or 0)
+        except (TypeError, ValueError):
+            off = 0
+        return int(pos_ms) - off
+    def _lyrics_px(self, base: int) -> int:
+        """Lyrics text size: base px scaled by the persisted font-scale
+        setting (0.85–1.3), clamped sane."""
+        try:
+            scale = float(getattr(self, "lyrics_font_scale", 1.0) or 1.0)
+        except (TypeError, ValueError):
+            scale = 1.0
+        return max(9, min(34, round(base * scale)))
 
 
 # ============================================================================

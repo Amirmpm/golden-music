@@ -271,7 +271,7 @@ _r = subprocess.run([sys.executable, str(_v31)],
                              "QT_QPA_PLATFORM", "offscreen"),
                          # non-ASCII check names die on cp1252 consoles
                          "PYTHONIOENCODING": "utf-8"})
-check("v31_remediation_suite", _r.returncode == 0)
+check("v31_remediation_suite", lambda: _r.returncode == 0)
 if _r.returncode != 0:
     sys.exit(1)
 print("ALL FEATURE TESTS PASSED!")

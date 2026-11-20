@@ -4,14 +4,14 @@
 
 # 🎵 Golden Music
 
-### The modern Windows music player that stays out of your way
+### The modern music player that stays out of your way
 
 *12 psychology-driven themes · Smart shuffle · Glass tray popup · Zero clutter*
 
-[![Version](https://img.shields.io/badge/Version-3.1.0-brightgreen?style=for-the-badge)](../../releases)
+[![Version](https://img.shields.io/badge/Version-3.2.0-brightgreen?style=for-the-badge)](../../releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![PyQt6](https://img.shields.io/badge/PyQt6-6.11+-41CD52?style=for-the-badge&logo=qt&logoColor=white)](https://www.riverbankcomputing.com/software/pyqt/)
-[![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white)](#)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-0078D6?style=for-the-badge)](#)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
 [![CI](https://github.com/Amirmpm/golden-music/actions/workflows/ci.yml/badge.svg)](https://github.com/Amirmpm/golden-music/actions/workflows/ci.yml)
 [![Stars](https://img.shields.io/github/stars/Amirmpm/golden-music?style=for-the-badge)](../../stargazers)
@@ -180,9 +180,17 @@ the window to the tray instead of minimizing (Settings → Interface).
 ### Option 1: Download Installer (Recommended)
 
 1. Go to [Releases](../../releases)
-2. Download `GoldenMusicSetup-3.1.0.exe`
+2. Download `GoldenMusicSetup-3.2.0.exe`
 3. Run the installer — it detects an existing installation and updates in place; your library, favorites and settings are preserved
 4. Enjoy your music! 🎉
+
+**Linux:** grab `GoldenMusic-3.2.0-linux-x86_64.tar.gz` (plus its `.sha256`) from the same release, then:
+
+```bash
+sha256sum -c GoldenMusic-3.2.0-linux-x86_64.tar.gz.sha256
+tar xzf GoldenMusic-3.2.0-linux-x86_64.tar.gz
+./GoldenMusic/GoldenMusic
+```
 
 ### Option 2: Run from Source
 
@@ -217,7 +225,8 @@ build_windows.bat
 
 Output:
 - `dist\GoldenMusic\GoldenMusic.exe` — The app (portable folder)
-- `dist\installer\GoldenMusicSetup-3.1.0.exe` — The installer
+- `dist\installer\GoldenMusicSetup-3.2.0.exe` — The installer
+- On Linux, `python build_release.py` produces the portable `dist/GoldenMusic/` folder (no installer); CI packs it into `GoldenMusic-3.2.0-linux-x86_64.tar.gz`
 
 ---
 
