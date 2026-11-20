@@ -268,7 +268,9 @@ _r = subprocess.run([sys.executable, str(_v31)],
                     cwd=str(_here.parent),
                     env={**os.environ,
                          "QT_QPA_PLATFORM": os.environ.get(
-                             "QT_QPA_PLATFORM", "offscreen")})
+                             "QT_QPA_PLATFORM", "offscreen"),
+                         # non-ASCII check names die on cp1252 consoles
+                         "PYTHONIOENCODING": "utf-8"})
 check("v31_remediation_suite", _r.returncode == 0)
 if _r.returncode != 0:
     sys.exit(1)

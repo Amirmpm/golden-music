@@ -32,6 +32,15 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+# Windows consoles default to cp1252 — the check names contain →/· etc.
+# Reconfigure BEFORE any printing or the whole suite dies on the first
+# non-ASCII check name (seen on windows-latest runners).
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import testenv as _testenv
@@ -125,8 +134,10 @@ class _SlowHandler(BaseHTTPRequestHandler):
             chunk = data[pos:pos + 16 * 1024]
             try:
                 self.wfile.write(chunk)
-            except (BrokenPipeError, ConnectionResetError):
+            except (BrokenPipeError, ConnectionResetError,
+                    ConnectionAbortedError):
                 return          # client paused/cancelled mid-transfer
+                # (Windows raises ConnectionAbortedError 10053)
             pos += len(chunk)
             time.sleep(self.chunk_delay)
 
