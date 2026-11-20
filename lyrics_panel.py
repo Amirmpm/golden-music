@@ -183,27 +183,34 @@ class LyricsPanel(QFrame):
             lbl = QLabel(text)
             lbl.setWordWrap(True)
             lbl.setStyleSheet(
-                f"color: {t['muted']}; font-size: 14px; background: transparent;")
+                f"color: {t['muted']}; font-size: {self.main_window._lyrics_px(14)}px; "
+                f"background: transparent;")
             self.lines_lay.insertWidget(self.lines_lay.count() - 1, lbl)
             self._line_labels.append(lbl)
 
     def sync_position(self, pos_ms: int):
         """Highlight the active line when synced lyrics are shown, scrolling
-        it into view (centered) so long lyrics follow the song."""
+        it into view (centered) so long lyrics follow the song.
+
+        v3.1: the persisted lyrics timing offset applies here (positive
+        shows lines earlier — use when lyrics lag the music)."""
         ly = self._lyrics
         if not ly or not ly.synced or not self._line_labels:
             return
+        mw = self.main_window
+        pos_ms = mw._lyrics_effective_ms(pos_ms)
         idx = ly.line_for_time(pos_ms)
         if idx == self._active_line or idx < 0:
             return
-        t = self.main_window.theme
+        t = mw.theme
         if 0 <= self._active_line < len(self._line_labels):
             self._line_labels[self._active_line].setStyleSheet(
-                f"color: {t['muted']}; font-size: 14px; background: transparent;")
+                f"color: {t['muted']}; font-size: {mw._lyrics_px(14)}px; "
+                f"background: transparent;")
         if idx < len(self._line_labels):
             self._line_labels[idx].setStyleSheet(
-                f"color: {t['gold_light']}; font-size: 15px; font-weight: 700;"
-                f"background: transparent;")
+                f"color: {t['gold_light']}; font-size: {mw._lyrics_px(15)}px; "
+                f"font-weight: 700; background: transparent;")
             # Auto-scroll the new active line to the vertical center.
             try:
                 scroll = self.findChild(QScrollArea)
@@ -219,9 +226,10 @@ class LyricsPanel(QFrame):
         if not self._line_labels:
             return
         t = self.main_window.theme
+        mw = self.main_window
         for i, lbl in enumerate(self._line_labels):
             active = i == self._active_line
             lbl.setStyleSheet(
                 f"color: {t['gold_light'] if active else t['muted']}; "
-                f"font-size: {15 if active else 14}px; "
+                f"font-size: {mw._lyrics_px(15 if active else 14)}px; "
                 f"font-weight: {700 if active else 400}; background: transparent;")

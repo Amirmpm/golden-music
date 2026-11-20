@@ -37,12 +37,60 @@ HTTP_OK = 200
 
 
 # ---------------------------------------------------------------------------
+# Proxy-aware URL opener (shared by search/resolve/artwork/downloads)
+# ---------------------------------------------------------------------------
+
+_PROXY_OPENER: urllib.request.OpenerDirector | None = None
+_PROXY_URL: str = ""
+
+
+def set_proxy(url: str) -> str:
+    """Install a custom HTTP(S) proxy for every request this module makes
+    (search, stream resolve, artwork, and downloads via online_mod.urlopen).
+    Empty string = clear (back to the system/env proxy). Returns the
+    effective proxy URL ("" when cleared). Raises ValueError on an
+    unusable proxy URL — never silently ignores a broken setting."""
+    global _PROXY_OPENER, _PROXY_URL
+    url = str(url or "").strip()
+    if not url:
+        _PROXY_OPENER, _PROXY_URL = None, ""
+        return ""
+    if not url.lower().startswith(("http://", "https://")):
+        raise ValueError("proxy must be http:// or https://")
+    parsed = urllib.parse.urlparse(url)
+    if not parsed.netloc or "." not in parsed.netloc and ":" not in parsed.netloc:
+        raise ValueError("proxy URL has no host")
+    handler = urllib.request.ProxyHandler({"http": url, "https": url})
+    _PROXY_OPENER = urllib.request.build_opener(handler)
+    _PROXY_URL = url
+    return _PROXY_URL
+
+
+def proxy_url() -> str:
+    return _PROXY_URL
+
+
+def urlopen(req, timeout: float):
+    """urlopen routed through the custom proxy when one is configured,
+    otherwise the default opener (which honours the OS/env proxy)."""
+    if _PROXY_OPENER is not None:
+        return _PROXY_OPENER.open(req, timeout=timeout)
+    return urllib.request.urlopen(req, timeout=timeout)  # nosec B310 (callers audit schemes)
+
+
+# ---------------------------------------------------------------------------
 # Model
 # ---------------------------------------------------------------------------
 
 @dataclass
 class OnlineTrack:
-    """One searchable online item, resolved lazily to a stream URL."""
+    """One searchable online item, resolved lazily to a stream URL.
+
+    ``downloads_allowed`` is tri-state: None = eligibility not yet
+    established (search results start unknown); True/False = established
+    from the source's actual item metadata at resolve time. The default is
+    deliberately NOT True — v3.0.0 hard-marked every item downloadable,
+    which was a false claim."""
     provider: str
     item_id: str
     title: str = ""
@@ -51,11 +99,17 @@ class OnlineTrack:
     duration_ms: int = 0
     artwork_url: str = ""
     source_url: str = ""          # human page (credits / source info)
-    downloads_allowed: bool = True
+    downloads_allowed: bool | None = None
     stream_url: str = ""           # filled by resolve_stream()
     size_bytes: int = 0
     ext: str = ""
     extra: dict = field(default_factory=dict)
+
+    def __hash__(self):
+        # identity hash: unified-queue bookkeeping (smart-shuffle set,
+        # history dedup) puts OnlineTrack objects in sets/dicts while the
+        # dataclass __eq__ stays field-based for index()/remove().
+        return id(self)
 
     def as_dict(self) -> dict:
         return {
@@ -158,7 +212,7 @@ class InternetArchiveProvider(OnlineProvider):
                 artwork_url=InternetArchiveProvider.THUMB_URL.format(
                     identifier=ident),
                 source_url=f"https://archive.org/details/{ident}",
-                downloads_allowed=True,
+                downloads_allowed=None,   # unknown until resolve-time check
                 extra={"downloads": d.get("downloads", 0)},
             ))
         return tracks
@@ -192,10 +246,42 @@ class InternetArchiveProvider(OnlineProvider):
                 best = f
         return best
 
+    @staticmethod
+    def assess_download_eligibility(metadata_json_text: str) -> bool | None:
+        """Item-specific download eligibility from the source's actual
+        metadata (the same metadata API response resolve_stream fetches —
+        no extra network call).
+
+        Returns False when the item carries an access restriction the
+        Internet Archive itself reports ("access-restricted-item",
+        darked items, or a private chosen file). Returns True for items
+        the source presents as publicly accessible. None = the payload was
+        unusable, so eligibility could NOT be established (callers must
+        not claim downloadability).
+
+        This replaces v3.0.0's constant ``downloads_allowed=True``.
+        """
+        try:
+            data = json.loads(metadata_json_text)
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(data, dict):
+            return None
+        if data.get("is_dark") is True:
+            return False
+        meta = data.get("metadata")
+        if not isinstance(meta, dict):
+            return None
+        flag = meta.get("access-restricted-item")
+        if flag is True or str(flag).lower() in ("true", "1"):
+            return False
+        return True
+
     # ---------------- I/O ----------------------------------------------
     def _http_get(self, url: str, timeout: float) -> bytes:
         """HTTPS GET with timeout + bounded retry. Never follows http://
-        (urllib enforces the https scheme by construction here)."""
+        (urllib enforces the https scheme by construction here). Routes
+        through the shared proxy-aware opener."""
         if not url.lower().startswith("https://"):
             raise ValueError("non-HTTPS URL refused")
         last_err = None
@@ -203,7 +289,7 @@ class InternetArchiveProvider(OnlineProvider):
             try:
                 req = urllib.request.Request(   # noqa: S310 (https enforced)
                     url, headers={"User-Agent": self.UA})
-                with urllib.request.urlopen(req, timeout=timeout) as r:  # nosec B310 (https enforced)
+                with urlopen(req, timeout) as r:  # nosec B310 (https enforced)
                     if r.status != HTTP_OK:
                         raise urllib.error.HTTPError(
                             url, r.status, "non-200", None, None)
@@ -231,6 +317,15 @@ class InternetArchiveProvider(OnlineProvider):
         f = self.pick_playable_file(text)
         if not f:
             raise RuntimeError("no playable audio file in item")
+        # Item-specific eligibility, established from the SAME metadata the
+        # resolver already fetched: the item's own access flags + the
+        # chosen file's private flag. Never assumed.
+        eligible = self.assess_download_eligibility(text)
+        file_private = str(f.get("private", "")).lower() in ("true", "1")
+        if eligible is False or file_private:
+            track.downloads_allowed = False
+        else:
+            track.downloads_allowed = eligible   # True, or None (unusable)
         name = urllib.parse.quote(str(f.get("name", "")), safe="")
         track.stream_url = (
             f"https://archive.org/download/"

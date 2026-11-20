@@ -62,6 +62,10 @@ class UpdateCheckWorker(QThread):
         super().__init__(parent)
         self._version = installed_version
         self._etag = etag
+        self._cancelled = False
+
+    def cancel(self):
+        self._cancelled = True
 
     def run(self):
         try:
@@ -69,6 +73,8 @@ class UpdateCheckWorker(QThread):
                 updater.HttpFetcher(), self._version, etag=self._etag)
         except Exception as e:      # never let a worker thread die silently
             result = {"status": "offline", "detail": str(e)}
+        if self._cancelled:         # app is shutting down: emit nothing
+            return
         self.finished_with.emit(result)
 
 

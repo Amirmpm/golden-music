@@ -35,7 +35,7 @@ Legend:
 | 21 | Playback speed | (player) 0.5-2× | 1.0 | Preserved (existing FX speed popup + optional bar button) | 1.0 | session | test_v12_features |
 | 22 | Repeat / Shuffle | player bar | off / off | Preserved (repeat off/all/one, smart shuffle with no-repeat-until-all-played) | off/off | `repeat_mode`, `shuffle` | existing suites |
 | **Equalizer** |||||||
-| 23 | EQ master + 7-band + balance | Equalizer pane | off | Not implemented (documented gap — no DSP chain in the Qt backend today) | — | — | — |
+| 23 | EQ master + 7-band + balance | Equalizer pane | off | **Blocked (technical)**: Qt Multimedia's QMediaPlayer exposes no per-band EQ/DSP; a real implementation requires swapping the audio backend (WASAPI APO = system-wide side effects, or an FFmpeg filter-graph pipeline). Deliberately not shipped as a decorative control. | — | — | — |
 | **Downloads** |||||||
 | 24 | Download folder | Downloads · picker | Music/nuvx | **Mapped** — one-time folder chooser (Downloads page + Settings), reused automatically for all downloads | `Music\GoldenMusic` | `download_folder` | test_v3_regression V9 + quicktest_downloads |
 | 25 | Storage limit Off/1-50 GB | Downloads · dropdown | Off | Adapted: hard 500 MB free-space floor (Nuvx also enforces 500 MB internally); optional GB cap not exposed | 500 MB floor | constant | V9/downloader tests |
@@ -44,12 +44,12 @@ Legend:
 | **Lyrics** |||||||
 | 28 | Lyrics toggle + panel | player | on | Preserved — GM lyrics panel (sidecar → embedded tags → cache → lrclib) + bar button | on | `show_lyrics_button`, `lyrics_online` | test_v12_features |
 | 29 | Romanization / Translation | Lyrics pane | on | N/A (GM's single-provider lyrics chain; translation providers not implemented) | — | — | — |
-| 30 | Lyrics text size | Lyrics pane | 100 | Not implemented (documented gap) | — | — | — |
-| 31 | Lyrics timing offset | Lyrics pane | 0 | Preserved via existing fullscreen lyrics behaviour (offset not exposed; gap documented) | — | — | — |
+| 30 | Lyrics text size | Lyrics pane | 100 | **Mapped (v3.1)** — Settings → Playback → Lyrics "text size" (85/100/115/130%), applied live to the side panel + fullscreen lyrics | 100% | `lyrics_font_scale` | test_v31_regression + settings dialog |
+| 31 | Lyrics timing offset | Lyrics pane | 0 | **Mapped (v3.1)** — Settings → Playback → Lyrics "timing offset" (−5 s … +5 s; positive = lines earlier), applied at sync time on both lyric surfaces | 0 ms | `lyrics_offset_ms` | test_v31_regression + settings dialog |
 | 32 | 16 lyrics providers + priority | Lyrics pane | rich-first | N/A — GM uses lrclib + cached/sidecar/embedded only (honest single-provider chain) | — | — | — |
 | **Sources / Network** |||||||
 | 33 | JioSaavn / Radio Javan fallback | Sources · toggles | off | N/A — GM has its own provider architecture (`online.OnlineProvider`) with the Internet Archive provider; additional sources = implement the interface | — | — | online tests |
-| 34 | Proxy System/Off/Custom/Tor | Network pane | System | Adapted: OS/system proxy applies (urllib honours env/OS); custom proxy UI not exposed | system | — | — |
+| 34 | Proxy System/Off/Custom/Tor | Network pane | System | **Mapped (v3.1)** — Settings → Online "Network proxy" (http://host:port); routes search/stream/artwork/downloads through a shared proxy-aware opener; invalid URLs refused loudly; empty = system proxy | system | `proxy_url` | test_v31_regression (ON-05) |
 | 35 | Hi-Res addon servers | Sources · URL list | — | N/A | — | — | — |
 | **Account & integrations** |||||||
 | 36 | YT Music Google sign-in | Account | signed out | N/A (no YouTube backend; provider architecture instead — legal simplicity) | — | — | — |
@@ -71,10 +71,10 @@ Legend:
 | 48 | Close to tray | Window · toggle | off | **Mapped** — existing GM close-to-tray behaviour (preserved) | off | `taskbar_close_to_tray` | test_functional |
 | 49 | Mini player | Ctrl+M / player | — | Preserved — mini player (window + rail row) | — | `geometry` | test_functional |
 | 50 | Fullscreen player | F key | — | Preserved (F11/F/esc handling) | — | — | test_shortcuts |
-| 51 | Queue panel ("Up next") | player bar | — | Adapted: GM queue is the current-playlist queue with Play-next/Add-to-queue actions (wired in v3); the sidebar drawer variant remains a documented gap | — | — | A4 regressions |
+| 51 | Queue panel ("Up next") | player bar | — | **Mapped (v3.1)** — player-bar queue button toggles the "Up Next" drawer (the previously unwired QueuePanel module), rendering the SAME unified mixed local/online queue with jump/remove actions | — | — | test_v31_regression (Q-02) |
 | 52 | Notifications | toasts | — | Preserved — in-app toasts (no tray balloon spam) | on | `toast_enabled` | test_functional |
-| 53 | Keyboard shortcuts pane | Settings | — | Adapted: shortcuts documented in README; live keycaps pane not implemented | — | — | test_shortcuts |
+| 53 | Keyboard shortcuts pane | Settings | — | **Mapped (v3.1)** — Settings → Shortcuts tab: the REAL live keymap (QShortcut/MediaKeyFilter registrations) in a keycap table; rebinding intentionally out of scope | — | — | test_v31_regression + manual |
 
-**Totals:** 53 inventoried Nuvx Desktop settings → **22 Mapped, 7 Adapted (documented), 17 N/A (service doesn't exist in GM), 7 documented gaps** (items 23, 30, 31 partial, 34 partial, 51 partial, 5 adapted, 14 adapted). No setting is claimed as "exists in Nuvx" that does not — every N/A row names the missing underlying service.
+**Totals (v3.1.0):** 53 inventoried Nuvx Desktop settings → **27 Mapped, 6 Adapted (documented), 17 N/A (service doesn't exist in GM), 1 documented technical blocker (item 23: EQ — no DSP chain in Qt Multimedia), 2 adapted-intentional (items 5, 14)**. v3.1 closed the gaps 30/31/34/51/53 with real, persisted, live-applied implementations. No setting is claimed as "exists in Nuvx" that does not — every N/A row names the missing underlying service.
 
 **Persistence correctness:** every implemented setting persists in `config.json`, is validated/coerced on load (`GlassSettings.validate`, `_validated_int/_validated_enum`, `sanitize_history`), applies immediately where appropriate (Appearance/Liquid Glass apply live; output device switches live), survives restart (V1 regression roundtrip), and supports reset (Appearance "Reset to defaults").

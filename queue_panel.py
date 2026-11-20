@@ -83,16 +83,24 @@ class QueuePanel(QFrame):
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
             self.list_widget.addItem(item)
             return
-        # Upcoming = everything after the current index
+        # Upcoming = everything after the current index (UNIFIED queue:
+        # entries are local paths or online tracks — one list)
+        import online as online_mod
         order = list(range(cur + 1, len(pl)))
         for pos in order:
-            path = pl[pos]
-            title, artist = mw._tag_cache.get(
-                path, (QueuePanel.Path_stem(path), ""))
+            entry = pl[pos]
+            if isinstance(entry, online_mod.OnlineTrack):
+                title = entry.title or "Unknown title"
+                artist = entry.artist or ""
+                tooltip = f"[online] {entry.source_url or entry.title}"
+            else:
+                title, artist = mw._tag_cache.get(
+                    entry, (QueuePanel.Path_stem(entry), ""))
+                tooltip = entry
             label = f"{pos - cur}.  {title}" + (f"  —  {artist}" if artist else "")
             item = QListWidgetItem(icon, label) if icon else QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, pos)
-            item.setToolTip(path)
+            item.setToolTip(tooltip)
             self.list_widget.addItem(item)
         if not order:
             item = QListWidgetItem("End of queue")

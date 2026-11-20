@@ -799,3 +799,23 @@ def extract_title_artist(filepath: str) -> tuple:
         artist = "Unknown Artist"
 
     return title, artist
+
+
+def extract_album(filepath: str) -> str:
+    """Album tag via mutagen easy-mode ("" when absent/unreadable).
+
+    One lightweight read; used by the background tag loader to fill the
+    album cache that Home/Albums grouping reads — never called on the UI
+    thread for batches.
+    """
+    try:
+        from mutagen import File as MutagenFile
+        m = MutagenFile(filepath, easy=True)
+        if m is not None and m.tags:
+            v = m.tags.get("album")
+            if isinstance(v, (list, tuple)):
+                v = v[0] if v else None
+            return str(v).strip() if v else ""
+    except Exception:
+        pass
+    return ""

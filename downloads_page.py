@@ -39,7 +39,7 @@ def _fmt_speed(bps: float) -> str:
 
 
 class JobRow(QFrame):
-    """One active/queued download."""
+    """One download row (active/queued/terminal)."""
 
     def __init__(self, job: "dl.DownloadJob", theme: dict, parent=None):
         super().__init__(parent)
@@ -69,12 +69,14 @@ class JobRow(QFrame):
 
         btns = QHBoxLayout()
         btns.addStretch(1)
+        self.folder_btn = QPushButton("Show in folder")
         self.pause_btn = QPushButton("Pause")
         self.resume_btn = QPushButton("Resume")
         self.cancel_btn = QPushButton("Cancel")
         self.retry_btn = QPushButton("Retry")
-        for b in (self.pause_btn, self.resume_btn, self.cancel_btn,
-                  self.retry_btn):
+        self.remove_btn = QPushButton("Remove")
+        for b in (self.folder_btn, self.pause_btn, self.resume_btn,
+                  self.cancel_btn, self.retry_btn, self.remove_btn):
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             btns.addWidget(b)
         lay.addLayout(btns)
@@ -99,8 +101,8 @@ class JobRow(QFrame):
                                      f"background: transparent;")
         self.info.setStyleSheet(f"color: {muted}; font-size: 12px; "
                                 f"background: transparent;")
-        for b in (self.pause_btn, self.resume_btn, self.cancel_btn,
-                  self.retry_btn):
+        for b in (self.folder_btn, self.pause_btn, self.resume_btn,
+                  self.cancel_btn, self.retry_btn, self.remove_btn):
             b.setStyleSheet(f"""
                 QPushButton {{
                     background: transparent; color: {accent};
@@ -137,6 +139,11 @@ class JobRow(QFrame):
         self.cancel_btn.setVisible(job.state not in (JobState.COMPLETED,
                                                      JobState.FAILED,
                                                      JobState.CANCELLED))
+        self.remove_btn.setVisible(job.state in (JobState.COMPLETED,
+                                                 JobState.FAILED,
+                                                 JobState.CANCELLED))
+        self.folder_btn.setVisible(
+            job.state == JobState.COMPLETED and bool(job.dest_path))
 
 
 class DownloadsPage(QWidget):
@@ -145,6 +152,8 @@ class DownloadsPage(QWidget):
     choose_folder_requested = pyqtSignal()          # one-time config
     open_folder_requested = pyqtSignal()
     show_in_folder_requested = pyqtSignal(str)     # path
+    remove_requested = pyqtSignal(int)             # job id (terminal rows)
+    clear_completed_requested = pyqtSignal()
 
     def __init__(self, theme: dict, manager=None, parent=None):
         super().__init__(parent)
@@ -177,8 +186,14 @@ class DownloadsPage(QWidget):
         lay.addWidget(self.folder_banner)
 
         # queue
+        qhead = QHBoxLayout()
         self.queue_title = QLabel("Active")
-        lay.addWidget(self.queue_title)
+        qhead.addWidget(self.queue_title, 1)
+        self.clear_btn = QPushButton("Clear finished")
+        self.clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.clear_btn.clicked.connect(self.clear_completed_requested.emit)
+        qhead.addWidget(self.clear_btn)
+        lay.addLayout(qhead)
         self.queue_host = QWidget()
         self.queue_lay = QVBoxLayout(self.queue_host)
         self.queue_lay.setContentsMargins(0, 0, 0, 0)
@@ -227,6 +242,15 @@ class DownloadsPage(QWidget):
             f"letter-spacing: 1.2px; background: transparent;")
         self.done_list.setStyleSheet(f"color: {muted}; font-size: 13px; "
                                       f"background: transparent;")
+        self.clear_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {muted};
+                border: 1px solid {border}; border-radius: 14px;
+                padding: 4px 14px; font-size: 12px; font-weight: 600;
+            }}
+            QPushButton:hover {{ background: {t.get('glass_hover',
+                                      'rgba(255,255,255,0.2)')}; }}
+        """)
         for b in (self.choose_btn, self.open_btn):
             b.setStyleSheet(f"""
                 QPushButton {{
@@ -251,7 +275,9 @@ class DownloadsPage(QWidget):
 
     def set_manager(self, manager):
         self.manager = manager
-        manager.job_updated.connect(lambda _j: self.refresh())
+        # In-place row updates: a progress tick updates ONLY that job's row
+        # (v3.0 tore down and rebuilt every row twice a second per job).
+        manager.job_updated.connect(self._update_row)
         manager.queue_changed.connect(self.refresh)
         manager.file_added.connect(
             lambda path, _job: self._note_completed(path))
@@ -273,13 +299,15 @@ class DownloadsPage(QWidget):
     def refresh(self):
         if self.manager is None:
             return
+        # Structural rebuild (queue_changed): rows are rebuilt only here;
+        # progress ticks go through _update_row instead.
         while self.queue_lay.count():
             item = self.queue_lay.takeAt(0)
             w = item.widget()
             if w is not None:
                 w.deleteLater()
-        jobs = [j for j in self.manager.jobs()
-                if j.state not in (JobState.COMPLETED,)]
+        self._rows: dict = {}
+        jobs = list(self.manager.jobs())
         for job in jobs:
             row = JobRow(job, self.theme)
             row.pause_btn.clicked.connect(
@@ -290,6 +318,11 @@ class DownloadsPage(QWidget):
                 lambda _c, j=job: self.manager.cancel(j.id))
             row.retry_btn.clicked.connect(
                 lambda _c, j=job: self.manager.retry(j.id))
+            row.remove_btn.clicked.connect(
+                lambda _c, j=job: self.remove_requested.emit(j.id))
+            row.folder_btn.clicked.connect(
+                lambda _c, j=job: self.show_in_folder_requested.emit(j.dest_path))
+            self._rows[job.id] = row
             self.queue_lay.addWidget(row)
         if not jobs:
             empty = QLabel("No active downloads.")
@@ -304,6 +337,15 @@ class DownloadsPage(QWidget):
         # a single job row stretches to fill the whole queue viewport (a
         # lone download rendered as a huge mostly-empty card).
         self.queue_lay.addStretch(1)
+
+    def _update_row(self, job):
+        """Progress/state tick — refresh the one affected row in place."""
+        row = getattr(self, "_rows", {}).get(job.id)
+        if row is not None:
+            row.refresh(job)
+            return
+        # unknown id (new job) — the queue_changed signal rebuilds; nothing
+        # else to do here
 
     def _note_completed(self, path: str):
         records = self.manager.history() if self.manager else []

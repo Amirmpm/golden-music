@@ -1,26 +1,48 @@
-# Release Notes — Golden Music 3.0.0
+# Release Notes — Golden Music 3.1.0
 
-**Codename: Nuvx Desktop Shell · Liquid Glass · Online Music · Downloads**
+3.1.0 is the engineering-remediation release: every Critical and High defect
+from the v3.0.0 audit is fixed, verified by the new `test_v31_regression`
+suite (62 checks) riding CI, plus the existing 13 suites (all green).
 
-## Highlights
-- **Home is your local library** in the Nuvx Desktop layout: Recently Played, Recently Added, Albums, Artists, Playlists, Favorites, Recently Downloaded — real data, never placeholder content, never online recommendations.
-- **Online music**: search + streaming through a provider architecture (Internet Archive ships: public-domain audio, no auth, downloads allowed). "Play next" / "Add to queue" give mixed local/online queues on ONE playback engine.
-- **Download manager**: pick the folder ONCE; then queue, progress %, speed, size, pause/resume/cancel/retry; completed files join your existing library exactly once, verified and never overwriting.
-- **Liquid Glass design system** replaces the 12-theme picker: accent colour (incl. artwork-derived), transparency, native Mica/Acrylic blur (Win 11 22H2+, opaque fallback), corner radius, density, animation intensity, reduced motion. Existing configs migrate automatically.
-- **Windows finally recognises Golden Music**: the app + installer now write the full Default-apps registration surface (RegisteredApplications + Capabilities + FileAssociations + Open with) — without ever touching your default-player choice (see Settings → Windows to make it the default yourself).
-- **Windows media controls (SMTC)**: media overlay / lock screen / taskbar flyout with Play/Pause/Next/Prev, title/artist, artwork (optional `winrt` packages; the app degrades gracefully without them — global media keys keep working regardless).
-- **Audio honesty**: the FFmpeg backend is back (all 9 formats really decode) and only formats the running machine verifiably plays are advertised to Windows.
-- Nuvx-style sidebar (collapsible), top player strip, context "Play next"/"Add to queue", safer single-instance behaviour, offline-drive library protection, repaired test suites, pip-audit + SBOM in CI.
+## Download manager (rebuilt)
+- Windows-safe disk-space validation (`shutil.disk_usage`; `os.statvfs`
+  crashed with an uncaught AttributeError on Windows)
+- Active-job cancellation signals the worker — never unlinks a `.part`
+  the worker still holds open (PermissionError on Windows before)
+- Persistent job REGISTRY: `retry()` actually finds FAILED jobs (it was a
+  silent no-op in 3.0.0)
+- History + queue persist atomically to `downloads_state.json` —
+  restart recovery resumes unfinished downloads via HTTP Range
+- In-flight duplicate-URL prevention; remove / clear-finished actions
+- Completed downloads join the local library exactly once
 
-## Upgrading
-Same installer identity as 2.x — install over the old version; settings, library, playlists, favorites, history and stats are preserved (the 12-theme setting migrates to a matching Liquid Glass accent/mode automatically).
+## Unified playback queue
+- ONE queue for local files AND online tracks — "Play next", Next,
+  Previous, repeat-one and shuffle behave identically across both
+  (v3.0's separate online queue never actually played next)
+- "Up Next" queue drawer wired into the player bar (the dead QueuePanel
+  module is live again)
 
-## Known limitations (honest list)
-- **Unsigned builds**: no code-signing certificate is available; Windows SmartScreen will warn on first run ("More info → Run anyway"). The updater verifies SHA-256 integrity of every artifact but cannot prove publisher authenticity — both are documented, nothing fabricated.
-- SMTC and Default-apps listing need the optional `winrt-*` wheels (bundled in requirements for win32) and a Windows 10/11 host; both degrade gracefully otherwise.
-- The Android release was **deferred** (see FINAL_ENGINEERING_REPORT): a separate Kotlin/Compose front end is the only sane path and it must not compromise this Windows release.
-- EQ/DSP, translated/romanised lyrics and a keycap shortcuts pane are documented gaps (NUVX_SETTINGS_PARITY.md rows 23/29/30/53).
+## Online correctness
+- Item-specific download eligibility from the Internet Archive's own
+  access metadata (no more blanket "everything is downloadable")
+- Stream-resolution and search races fixed with request generations —
+  stale responses can never replace a newer selection or pollute the
+  search cache
+- Custom HTTP(S) proxy setting (search/stream/artwork/downloads)
 
-## Verification status
-- 21 test suites green in this environment (incl. the new 46-check v3 regression suite and a real HTTP download roundtrip).
-- Windows-only surfaces (registry/SMTC/DWM/installer) are code-reviewed + logic-tested; the final visual Default-apps / SMTC confirmation should be re-run once on a clean Windows machine (AUDIT GM-02/GM-04 status lines).
+## Home
+- Album-aware cards (real album tags, distinct albums)
+- "Add to Playlist" / "Open Album" act on the SELECTED item
+- Async cover loading — artwork reads + decodes off the GUI thread
+- "See all artists" navigates (was a silent no-op)
+
+## Lyrics settings
+- Text size (85–130%) and timing offset (±5 s) — persisted, applied live
+
+## Shutdown reliability
+- Coordinated, bounded shutdown of every background worker
+  (download worker, stream resolvers, artwork, update probe, cover
+  loader) — no more interpreter aborts at teardown
+
+See CHANGELOG.md for the full list and BUG_TRACKER.md for root causes.

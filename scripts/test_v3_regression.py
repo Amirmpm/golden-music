@@ -333,6 +333,12 @@ check("V9 downloaded track joins the library exactly once",
 w._on_download_completed(str(final), job)
 check("V9 no duplicate indexing on repeated completion",
       w.library.count(str(final)) == 1)
+# v3.1: history is recorded by the manager inside the file_added chain
+# (queued delivery) — pump the loop until the record lands.
+deadline = time.time() + 5
+while time.time() < deadline and not any(
+        r.get("title") == "Downloaded Song" for r in w.downloads_history):
+    app.processEvents(); time.sleep(0.03)
 check("V9 downloads history recorded",
       any(r.get("title") == "Downloaded Song" for r in w.downloads_history))
 srv.shutdown()

@@ -38,6 +38,7 @@ class SettingsDialog(QDialog):
         tabs.addTab(self._build_online_tab(), "Online")
         tabs.addTab(self._build_windows_tab(), "Windows")
         tabs.addTab(self._build_library_tab(), "Library")
+        tabs.addTab(self._build_shortcuts_tab(), "Shortcuts")
         tabs.addTab(self._build_about_tab(), "About")
         layout.addWidget(tabs)
 
@@ -390,6 +391,21 @@ class SettingsDialog(QDialog):
         hl.addLayout(row)
         layout.addWidget(hist_group)
 
+        # v3.1 (NUVX_SETTINGS_PARITY item 34): custom proxy — REAL
+        # implementation (applies to search/stream/artwork/downloads)
+        proxy_group = QGroupBox("Network Proxy")
+        pl = QVBoxLayout(proxy_group)
+        self.proxy_edit = QLineEdit()
+        self.proxy_edit.setPlaceholderText("http://proxy.example.com:8080")
+        pl.addWidget(self.proxy_edit)
+        proxy_hint = QLabel(
+            "Empty = system proxy. Applies to online search, streaming, "
+            "artwork and downloads. Applied on OK (an invalid URL is "
+            "refused with a message).")
+        proxy_hint.setWordWrap(True)
+        pl.addWidget(proxy_hint)
+        layout.addWidget(proxy_group)
+
         layout.addStretch(1)
         return tab
 
@@ -408,6 +424,60 @@ class SettingsDialog(QDialog):
     # ------------------------------------------------------------------
     # Windows integration tab
     # ------------------------------------------------------------------
+    def _build_shortcuts_tab(self) -> QWidget:
+        """Dedicated keyboard-shortcuts page (NUVX_SETTINGS_PARITY item
+        53): documents the REAL, live shortcuts — the ones QShortcut and
+        MediaKeyFilter actually install."""
+        from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem, \
+            QHeaderView
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setSpacing(12)
+        intro = QLabel(
+            "These shortcuts are installed by the application itself — "
+            "this page documents the live keymap, it does not (yet) allow "
+            "rebinding.")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+        table = QTableWidget(0, 2)
+        table.setHorizontalHeaderLabels(["Shortcut", "Action"])
+        table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.Stretch)
+        table.verticalHeader().setVisible(False)
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        shortcuts = [
+            ("Space / Enter", "Play / Pause (when no list or input has focus)"),
+            ("Ctrl + ←", "Previous track"),
+            ("Ctrl + →", "Next track"),
+            ("Ctrl + ↑ / Ctrl + ↓", "Volume up / down"),
+            ("← / → (neutral focus)", "Previous / Next track"),
+            ("↑ / ↓ (neutral focus)", "Volume up / down"),
+            ("Ctrl + F", "Focus the search bar"),
+            ("Ctrl + M", "Toggle Mini Player"),
+            ("Ctrl + J", "Jump to the playing track"),
+            ("F11 / F", "Fullscreen player (Esc leaves)"),
+            ("Esc", "Leave the fullscreen player"),
+            ("Media keys", "Play/Pause/Stop/Next/Prev — global (keyboard or "
+                          "headset)"),
+        ]
+        for key, action in shortcuts:
+            r = table.rowCount()
+            table.insertRow(r)
+            k_item = QTableWidgetItem(key)
+            k_item.setFont(self._mono_font())
+            table.setItem(r, 0, k_item)
+            table.setItem(r, 1, QTableWidgetItem(action))
+        layout.addWidget(table, 1)
+        return tab
+
+    def _mono_font(self):
+        from PyQt6.QtGui import QFont
+        f = QFont("Consolas")
+        f.setStyleHint(QFont.StyleHint.Monospace)
+        return f
+
     def _build_windows_tab(self) -> QWidget:
         tab = QWidget()
         layout = QVBoxLayout(tab)
@@ -545,6 +615,28 @@ class SettingsDialog(QDialog):
         lyr_layout.addWidget(self.lyrics_cb)
         self.lyrics_online_cb = QCheckBox("Allow fetching lyrics online when missing")
         lyr_layout.addWidget(self.lyrics_online_cb)
+        # v3.1 (NUVX_SETTINGS_PARITY items 30/31): lyrics text size + timing
+        # offset — REAL implementations, persisted and applied live
+        lyr_row1 = QHBoxLayout()
+        lyr_row1.addWidget(QLabel("Lyrics text size:"))
+        self.lyr_scale_combo = QComboBox()
+        self.lyr_scale_combo.addItem("85%", 0.85)
+        self.lyr_scale_combo.addItem("100% (default)", 1.0)
+        self.lyr_scale_combo.addItem("115%", 1.15)
+        self.lyr_scale_combo.addItem("130%", 1.3)
+        lyr_row1.addWidget(self.lyr_scale_combo)
+        lyr_row1.addStretch(1)
+        lyr_layout.addLayout(lyr_row1)
+        lyr_row2 = QHBoxLayout()
+        lyr_row2.addWidget(QLabel("Timing offset:"))
+        self.lyr_offset_spin = QSpinBox()
+        self.lyr_offset_spin.setRange(-5000, 5000)
+        self.lyr_offset_spin.setSingleStep(100)
+        self.lyr_offset_spin.setSuffix(" ms")
+        lyr_row2.addWidget(self.lyr_offset_spin)
+        lyr_row2.addWidget(QLabel("(positive = lines earlier)"))
+        lyr_row2.addStretch(1)
+        lyr_layout.addLayout(lyr_row2)
         layout.addWidget(lyr_group)
 
         # Appearance extras
@@ -771,6 +863,16 @@ class SettingsDialog(QDialog):
             bool(getattr(mw, 'visualizer_enabled', True)))
         self.lyrics_online_cb.setChecked(
             getattr(self.main_window, 'lyrics_online_enabled', True))
+        # v3.1: lyrics font scale / timing offset / proxy
+        scale = float(getattr(self.main_window, 'lyrics_font_scale', 1.0) or 1.0)
+        si = self.lyr_scale_combo.findData(round(scale, 2))
+        if si < 0:
+            si = self.lyr_scale_combo.findData(1.0)
+        self.lyr_scale_combo.setCurrentIndex(max(0, si))
+        self.lyr_offset_spin.setValue(
+            int(getattr(self.main_window, 'lyrics_offset_ms', 0) or 0))
+        self.proxy_edit.setText(
+            str(getattr(self.main_window, 'proxy_url', '') or ''))
 
         # Audio output
         saved_out = getattr(self.main_window, 'audio_output_id', "")
@@ -924,6 +1026,38 @@ class SettingsDialog(QDialog):
         mw.player_bar.rate_btn.setVisible(self.rate_cb.isChecked())
         mw.player_bar.lyrics_btn.setVisible(self.lyrics_cb.isChecked())
         mw.lyrics_online_enabled = self.lyrics_online_cb.isChecked()
+        # v3.1: lyrics text size + timing offset (applied live to both the
+        # side panel and the fullscreen lyrics)
+        mw.lyrics_font_scale = float(self.lyr_scale_combo.currentData() or 1.0)
+        mw.lyrics_offset_ms = self.lyr_offset_spin.value()
+        try:
+            lp = getattr(mw, "_lyrics_panel", None)
+            if lp is not None:
+                lp._restyle_lines()
+            fs = getattr(mw, "_fullscreen_player", None)
+            if fs is not None:
+                fs._restyle_lines()
+        except Exception:
+            pass
+        # v3.1: custom proxy (validated — invalid URLs are refused here,
+        # keeping the previously-working setting)
+        proxy = self.proxy_edit.text().strip()
+        if proxy:
+            try:
+                import online as _online_mod
+                _online_mod.set_proxy(proxy)
+                mw.proxy_url = proxy
+            except ValueError as e:
+                QMessageBox.warning(
+                    self, APP_NAME, f"Proxy not applied:\n{e}\n\n"
+                    "Keeping the previous proxy setting.")
+        else:
+            try:
+                import online as _online_mod
+                _online_mod.set_proxy("")
+            except Exception:
+                pass
+            mw.proxy_url = ""
         mw.visualizer_enabled = self.viz_cb.isChecked()
         try:
             fs = getattr(mw, "_fullscreen_player", None)

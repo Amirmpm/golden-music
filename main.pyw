@@ -58,7 +58,7 @@ from PyQt6.QtWidgets import QStyledItemDelegate
 from config import (
     APP_NAME, APP_VERSION, ORG_NAME, AUDIO_EXTS, config_path,
     Theme, build_qss, fmt_time, scan_folder, extract_title_artist,
-    HAVE_QT_AUDIO, load_json_file, load_tag_cache_file,
+    extract_album, HAVE_QT_AUDIO, load_json_file, load_tag_cache_file,
     restrict_file_permissions, path_within
 )
 from icons import Icon, render_icon, make_icon, get_dpr
@@ -73,6 +73,7 @@ import coverart
 import ipc
 import updater
 from update_dialog import UpdateCheckWorker, UpdateBanner, UpdateDialog
+from queue_panel import QueuePanel
 from mediakeys import MediaKeyFilter
 
 # --- v3: Liquid Glass system, Nuvx Desktop shell, online music, downloads,
@@ -590,6 +591,9 @@ class PlayerBar(QFrame):
         self.repeat_btn = IconButton(Icon.REPEAT, icon_size=18, button_size=32)
         self.repeat_btn.setCheckable(True)
         self.vol_btn = IconButton(Icon.VOLUME_HIGH, icon_size=18, button_size=28)
+        self.queue_btn = IconButton(Icon.QUEUE, icon_size=18, button_size=32)
+        self.queue_btn.setToolTip("Up Next (queue)")
+        self.queue_btn.setCheckable(True)
         self.vol_slider = ClickableSlider(Qt.Orientation.Horizontal)
         self.vol_slider.setObjectName("VolSlider")
         self.vol_slider.setRange(0, 100)
@@ -617,6 +621,7 @@ class PlayerBar(QFrame):
         right_layout.addWidget(self.shuffle_btn)
         right_layout.addWidget(self.lyrics_btn)
         right_layout.addWidget(self.repeat_btn)
+        right_layout.addWidget(self.queue_btn)
         right_layout.addWidget(self.vol_btn)
         right_layout.addWidget(self.vol_slider)
         right_layout.addSpacing(4)
@@ -650,7 +655,7 @@ class PlayerBar(QFrame):
         self.theme = theme
         for btn in [self.like_btn, self.prev_btn, self.next_btn,
                     self.shuffle_btn, self.repeat_btn, self.vol_btn,
-                    self.lyrics_btn, self.track_menu_btn,
+                    self.queue_btn, self.lyrics_btn, self.track_menu_btn,
                     self.more_btn, self.ab_btn, self.rate_btn]:
             btn.set_theme(theme)
         # Play button icon (always window_bg color on gold background)
@@ -1618,10 +1623,10 @@ class CoverLoaderThread(QThread):
 # Tag loader thread — loads title/artist in background for list items
 # ============================================================================
 class TagLoaderThread(QThread):
-    """Loads title/artist for a batch of file paths in background.
-    Emits (path, title, artist) for each track as it's processed.
+    """Loads title/artist/album for a batch of file paths in background.
+    Emits (path, title, artist, album) for each track as it's processed.
     """
-    tag_loaded = pyqtSignal(str, str, str)
+    tag_loaded = pyqtSignal(str, str, str, str)
 
     def __init__(self, paths: list, parent=None):
         super().__init__(parent)
@@ -1637,11 +1642,12 @@ class TagLoaderThread(QThread):
                 break
             try:
                 title, artist = extract_title_artist(path)
-                self.tag_loaded.emit(path, title, artist)
+                album = extract_album(path)
             except Exception:
                 # Fallback to filename
                 fname = os.path.splitext(os.path.basename(path))[0]
-                self.tag_loaded.emit(path, fname, "Unknown Artist")
+                title, artist, album = fname, "Unknown Artist", ""
+            self.tag_loaded.emit(path, title, artist, album)
 
 
 # ============================================================================
@@ -1780,10 +1786,22 @@ class MainWindow(QMainWindow):
         self.downloads_history = []   # completed-download records
         self.online_enabled = True
         self.current_online = None    # OnlineTrack while streaming
-        self.online_queue = []         # pending online tracks (play next)
+        # v3.1: ONE unified queue — current_playlist entries are either a
+        # local file path (str) or an OnlineTrack. v3.0 kept a separate
+        # online_queue that NEVER merged with the local one, so an online
+        # "Play next" could not actually play next during local playback.
         self.download_manager = None
         self._smtc = None
         self._artwork_accent_job = None
+        self._album_cache = {}        # path -> album tag (Home/Albums data)
+        self._resolve_generation = 0  # stream-resolve request ids
+        self._download_resolve_generation = 0
+        self._online_art_token = 0     # online artwork request ids
+        self.queue_panel = None       # wired in _init_v3_systems
+        # v3.1 settings-completion state (NUVX_SETTINGS_PARITY items 30/31/34)
+        self.lyrics_font_scale = 1.0  # 0.85–1.3 applied to lyrics text
+        self.lyrics_offset_ms = 0     # timing offset (synced lyrics)
+        self.proxy_url = ""           # custom HTTP(S) proxy for online I/O
 
         # Settings
         self.auto_rescan = True
@@ -2165,9 +2183,9 @@ class MainWindow(QMainWindow):
         self.home_page.favorite_requested.connect(
             lambda item: self._home_favorite(item))
         self.home_page.add_to_playlist_requested.connect(
-            lambda item: self._show_playlists())
+            self._home_add_to_playlist)
         self.home_page.open_album_requested.connect(
-            lambda _item: self._on_rail_clicked("albums"))
+            self._home_open_album)
         self.home_page.open_artist_requested.connect(
             lambda item: self._home_open_artist(item))
         self.home_page.track_info_requested.connect(
@@ -2182,11 +2200,9 @@ class MainWindow(QMainWindow):
             self.theme,
             provider=online_mod.provider_by_name("internetarchive"))
         self.search_page.search_triggered.connect(self._on_search_query)
-        self.search_page.play_track_requested.connect(self._play_online_track)
-        self.search_page.play_next_requested.connect(
-            lambda t: self.online_queue.insert(0, t))
-        self.search_page.add_queue_requested.connect(
-            lambda t: self.online_queue.append(t))
+        self.search_page.play_track_requested.connect(self._play_online_now)
+        self.search_page.play_next_requested.connect(self._queue_insert_next)
+        self.search_page.add_queue_requested.connect(self._queue_add_end)
         self.search_page.download_track_requested.connect(
             self._download_online_track)
         return self.search_page
@@ -3464,7 +3480,8 @@ class MainWindow(QMainWindow):
         self._tag_loader.tag_loaded.connect(self._on_tag_loaded)
         self._tag_loader.start()
 
-    def _on_tag_loaded(self, path: str, title: str, artist: str):
+    def _on_tag_loaded(self, path: str, title: str, artist: str,
+                       album: str = ""):
         """Called when a tag is loaded in background."""
         # Drop results from a cancelled loader: a slow mutagen read on an old
         # thread must never overwrite a fresher value written after an edit.
@@ -3472,6 +3489,8 @@ class MainWindow(QMainWindow):
         if loader is not None and getattr(loader, "generation", None) != self._tag_loader_generation:
             return
         self._tag_cache[path] = (title, artist)
+        if album:
+            self._album_cache[path] = album
         # Update the corresponding item in the list
         for lst in (self.library_list, self.favorites_list):
             for i in range(lst.count()):
@@ -4409,7 +4428,13 @@ class MainWindow(QMainWindow):
     def _load_and_play_current(self):
         if not self.current_playlist or self.current_index < 0:
             return
-        path = self.current_playlist[self.current_index]
+        entry = self.current_playlist[self.current_index]
+        # Unified queue: an OnlineTrack entry plays through the stream path
+        # (position bookkeeping is already set by the caller).
+        if isinstance(entry, online_mod.OnlineTrack):
+            self._play_online_track(entry)
+            return
+        path = entry
         self._push_history(path)
         self.shuffle_unplayed.discard(path)   # smart shuffle: this one had its turn
         if getattr(self, "fx", None):
@@ -4483,11 +4508,19 @@ class MainWindow(QMainWindow):
 
     def _init_v3_systems(self):
         """Start the v3 subsystems once the UI exists: download manager,
-        Windows SMTC media controls, search history, home model."""
-        # --- downloads (one-time folder, queue, library integration) ---
+        Windows SMTC media controls, search history, home model, queue
+        drawer."""
+        # --- downloads (one-time folder, queue, library integration,
+        # restart recovery + history persistence via the state file) ---
         try:
             folder = self.download_folder or str(self._default_download_dir())
-            self.download_manager = dl_mod.DownloadManager(Path(folder))
+            self.download_manager = dl_mod.DownloadManager(
+                Path(folder),
+                state_file=config_path().parent / "downloads_state.json",
+                history=self.downloads_history)
+            # the manager now OWNS the history (loaded from its state file,
+            # migrated from the legacy config key on first boot)
+            self.downloads_history = self.download_manager.history()
             self.download_manager.file_added.connect(self._on_download_completed)
             self.download_manager.job_failed.connect(
                 lambda job: self._show_toast(
@@ -4495,8 +4528,31 @@ class MainWindow(QMainWindow):
             self.downloads_page.set_manager(self.download_manager)
             self.downloads_page.set_folder(Path(folder))
             self.downloads_page.set_completed(self.downloads_history)
+            self.downloads_page.remove_requested.connect(
+                self._on_download_remove)
+            self.downloads_page.clear_completed_requested.connect(
+                self._on_download_clear)
+            self.downloads_page.show_in_folder_requested.connect(
+                self._reveal_download)
         except Exception as e:
             log.warning(f"download manager init failed: {e}")
+        # --- queue drawer ("Up Next") — the QueuePanel that existed but was
+        # never wired; shares the SAME unified queue as every other surface ---
+        try:
+            self.queue_panel = QueuePanel(self)
+            self.queue_panel.setParent(self)      # overlay child of the window
+            self.queue_panel.hide()
+            self.player_bar.queue_btn.clicked.connect(
+                self._toggle_queue_panel)
+            self._layout_queue_panel()
+        except Exception as e:
+            log.warning(f"queue panel init failed: {e}")
+        # --- crash guard: every ALWAYS-ON v3 thread must be joined no matter
+        # HOW the process exits (tests/diag paths never run closeEvent's
+        # force branch — an unjoined QThread aborts the interpreter at
+        # teardown). Registered once, idempotent, ordered before teardown.
+        import atexit as _atexit
+        _atexit.register(self._shutdown_v3_workers)
         # --- Windows media controls (SMTC) — best effort, optional winrt ---
         try:
             self._smtc = smtc.SystemMediaControls(self, enabled=True)
@@ -4522,20 +4578,93 @@ class MainWindow(QMainWindow):
         return Path.home() / "Music" / "GoldenMusic"
 
     # ------------------------------------------------------------------
-    # Online playback (ONE engine: AudioBackend.play_url streams)
+    # Online playback (ONE engine: AudioBackend.play_url streams).
+    # ONE unified queue: current_playlist entries are local paths (str) or
+    # OnlineTrack objects — Next/Previous/Play-next/repeat/shuffle treat
+    # both identically.
     # ------------------------------------------------------------------
+    def _lyrics_px(self, base: int) -> int:
+        """Lyrics text size: base px scaled by the persisted font-scale
+        setting (0.85–1.3), clamped sane."""
+        try:
+            scale = float(getattr(self, "lyrics_font_scale", 1.0) or 1.0)
+        except (TypeError, ValueError):
+            scale = 1.0
+        return max(9, min(34, round(base * scale)))
+
+    def _lyrics_effective_ms(self, pos_ms: int) -> int:
+        """Apply the lyrics timing offset setting: positive values show
+        lines EARLIER (use when lyrics lag the music); negative values
+        show them later."""
+        try:
+            off = int(getattr(self, "lyrics_offset_ms", 0) or 0)
+        except (TypeError, ValueError):
+            off = 0
+        return int(pos_ms) - off
+
+    def _apply_proxy_setting(self):
+        """Install the persisted custom proxy (validated — an invalid URL
+        is refused with a warning and falls back to the system proxy)."""
+        try:
+            online_mod.set_proxy(str(getattr(self, "proxy_url", "") or ""))
+        except ValueError as e:
+            log.warning(f"saved proxy invalid (system proxy kept): {e}")
+            self.proxy_url = ""
+
+    def _queue_insert_next(self, track):
+        """Online 'Play next': insert right after the currently playing
+        entry — a LOCAL track may be playing; the online track becomes the
+        real next track (v3.0's separate online_queue never did)."""
+        if not self.current_playlist:
+            self._play_online_now(track)
+            return
+        idx = self.current_index + 1 if self.current_index >= 0 else 0
+        self.current_playlist.insert(min(idx, len(self.current_playlist)), track)
+        self._refresh_queue_panel()
+        self._show_toast(f"Playing next: {track.title}")
+
+    def _queue_add_end(self, track):
+        """Online 'Add to queue': append to the unified queue."""
+        if not self.current_playlist:
+            self._play_online_now(track)
+            return
+        self.current_playlist.append(track)
+        self._refresh_queue_panel()
+        self._show_toast(f"Added to queue: {track.title}")
+
+    def _play_online_now(self, track):
+        """Search 'Play' — a single-track session over the unified queue."""
+        self.current_playlist = [track]
+        self.current_index = 0
+        self.play_history.clear()
+        self.redo_stack.clear()
+        self._play_online_track(track)
+
     def _play_online_track(self, track):
         if not getattr(self, "online_enabled", True):
             self._show_toast("Online music is disabled in Settings")
             return
         self._show_toast(f"Streaming “{track.title}”…")
+        # Supersede any in-flight resolve: cancel it and stamp a generation
+        # so a STALE resolve can never replace a newer selection (the old
+        # last-arrival-wins race let a slow request hijack playback).
+        old = getattr(self, "_resolve_worker", None)
+        if old is not None:
+            old.cancel()
+        self._resolve_generation += 1
         w = StreamResolveWorker(self.search_page.provider, track)
-        w.resolved.connect(self._on_stream_resolved)
-        w.failed.connect(self._on_stream_failed)
-        w.start()
+        w.resolved.connect(
+            lambda t, w=w: self._on_stream_resolved(t, w))
+        w.failed.connect(
+            lambda t, e, w=w: self._on_stream_failed(t, e, w))
         self._resolve_worker = w
+        w.start()
 
-    def _on_stream_resolved(self, track):
+    def _on_stream_resolved(self, track, worker=None):
+        # Stale-resolve rejection: only the CURRENT request may commit.
+        if worker is not None and worker is not getattr(
+                self, "_resolve_worker", None):
+            return
         if not self.audio.play_url(track.stream_url):
             self._show_toast("Stream failed to start", error=True, ms=4000)
             return
@@ -4545,6 +4674,10 @@ class MainWindow(QMainWindow):
         # stop local-track bookkeeping from leaking into the stream
         self.current_track = None
         self._finalize_listen_credit()
+        # unified-queue bookkeeping: history + smart-shuffle parity with
+        # local tracks so Previous/Next work across mixed sequences
+        self._push_history(track)
+        self.shuffle_unplayed.discard(track)
         self.now_title.setMarqueeText(title)
         self.now_artist.setMarqueeText(artist)
         self.player_bar.title_label.setMarqueeText(title)
@@ -4553,27 +4686,44 @@ class MainWindow(QMainWindow):
         self.player_bar.time_current.setText("0:00")
         self.player_bar.seek_slider.setValue(0)
         self.player_bar.update_like_button(False)
-        self.player_bar.update_shuffle_button(False)
         self._highlight_playing_in_lists()
         self._smtc_update_metadata(title, artist)
         self._load_online_artwork(track)
+        self._refresh_queue_panel()
         if self.mini_player and self.mini_player.isVisible():
             self.mini_player.update_track(title, artist, None)
         if getattr(self, "tray_menu_widget", None) is not None:
             self.tray_menu_widget.update_now_playing(title, artist, None)
 
-    def _on_stream_failed(self, track, err):
+    def _on_stream_failed(self, track, err, worker=None):
+        if worker is not None and worker is not getattr(
+                self, "_resolve_worker", None):
+            return                      # stale failure — newer request pending
         self._show_toast(f"Stream failed: {err}", error=True, ms=4000)
         log.warning(f"stream resolve failed: {track.title}: {err}")
 
     def _load_online_artwork(self, track):
         provider = self.search_page.provider
+        # request-id token: a late response for an OLD track must never
+        # overwrite the artwork of the newer track
+        self._online_art_token = getattr(self, "_online_art_token", 0) + 1
+        token = self._online_art_token
         w = FnWorker(lambda: provider.artwork(track), self)
-        w.done.connect(self._on_online_artwork)
-        w.start()
+        w.done.connect(
+            lambda data, t=token: self._on_online_artwork(data, t))
+        old = getattr(self, "_online_art_worker", None)
+        if old is not None:
+            try:
+                old.wait(200)          # one-shot worker; no cancel API
+            except Exception:
+                pass
         self._online_art_worker = w
+        w.start()
 
-    def _on_online_artwork(self, data):
+    def _on_online_artwork(self, data, token=None):
+        if token is not None and \
+                token != getattr(self, "_online_art_token", 0):
+            return                      # stale artwork response — drop
         if data:
             from PyQt6.QtGui import QPixmap
             pm = QPixmap()
@@ -4628,8 +4778,10 @@ class MainWindow(QMainWindow):
             log.warning(f"open folder failed: {e}")
 
     def _download_online_track(self, track):
-        if not getattr(track, "downloads_allowed", True):
-            self._show_toast("This source does not permit downloads")
+        if getattr(track, "downloads_allowed", None) is False:
+            self._show_toast(
+                "This item is access-restricted on the source — downloads "
+                "are not permitted", error=True, ms=5000)
             return
         if not self.download_folder:
             # One-time folder configuration, then retry the download once
@@ -4638,36 +4790,135 @@ class MainWindow(QMainWindow):
             if not self.download_folder:
                 return
         self._show_toast(f"Downloading “{track.title}”…")
+        # Supersede any in-flight download-resolve (generation guard — a
+        # stale resolve must never enqueue the wrong item)
+        old = getattr(self, "_download_resolve_worker", None)
+        if old is not None:
+            old.cancel()
+        self._download_resolve_generation += 1
         w = StreamResolveWorker(self.search_page.provider, track)
-        w.resolved.connect(self._on_download_resolved)
-        w.start()
+        w.resolved.connect(
+            lambda t, w=w: self._on_download_resolved(t, w))
         self._download_resolve_worker = w
+        w.start()
 
-    def _on_download_resolved(self, track):
+    def _on_download_resolved(self, track, worker=None):
+        if worker is not None and worker is not getattr(
+                self, "_download_resolve_worker", None):
+            return                      # stale resolve — newer request won
+        # The resolver established item-specific eligibility from the
+        # source's own metadata — refuse restricted items here too.
+        if getattr(track, "downloads_allowed", None) is False:
+            self._show_toast(
+                "This item is access-restricted on the source — downloads "
+                "are not permitted", error=True, ms=5000)
+            return
         try:
             self.download_manager.download_track(track)
             self._show_toast(f"Queued: {track.title}")
         except PermissionError as e:
             self._show_toast(str(e), error=True, ms=4000)
+        except ValueError as e:
+            self._show_toast(str(e), error=True, ms=4000)
         except Exception as e:
             self._show_toast(f"Download failed: {e}", error=True, ms=4000)
+
+    # ------------------------------------------------------------------
+    # Downloads page actions (remove / clear / reveal)
+    # ------------------------------------------------------------------
+    def _on_download_remove(self, job_id):
+        if self.download_manager is not None:
+            self.download_manager.remove(int(job_id))
+
+    def _on_download_clear(self):
+        if self.download_manager is not None:
+            n = self.download_manager.clear_completed()
+            self._show_toast(
+                f"Cleared {n} finished download"
+                + ("s" if n != 1 else "") if n else "Nothing to clear")
+
+    def _reveal_download(self, path):
+        """Open the file's folder (Windows: explorer on the parent dir)."""
+        folder = os.path.dirname(str(path or "")) or \
+            (self.download_folder or str(self._default_download_dir()))
+        try:
+            from PyQt6.QtGui import QDesktopServices
+            from PyQt6.QtCore import QUrl
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+        except Exception as e:
+            log.warning(f"reveal download failed: {e}")
+
+    # ------------------------------------------------------------------
+    # Queue drawer ("Up Next") — one unified queue, every surface in sync
+    # ------------------------------------------------------------------
+    def _shutdown_v3_workers(self):
+        """Idempotent, order-safe stop of the always-on v3 worker threads
+        (Home cover loader + download worker). Called from closeEvent's
+        force-quit branch AND atexit (tests and diagnostic paths never
+        reach closeEvent — an unjoined QThread aborts teardown)."""
+        if getattr(self, "_v3_shutdown_done", False):
+            return
+        self._v3_shutdown_done = True
+        try:
+            hp = getattr(self, "home_page", None)
+            if hp is not None and hasattr(hp, "shutdown"):
+                hp.shutdown()           # bounded cover-loader join
+        except Exception as e:
+            log.debug(f"home cover loader shutdown: {e}")
+        try:
+            dm = getattr(self, "download_manager", None)
+            if dm is not None:
+                dm.stop()                # persist + bounded join
+        except Exception as e:
+            log.debug(f"download manager shutdown: {e}")
+
+    def _toggle_queue_panel(self, checked=None):
+        qp = getattr(self, "queue_panel", None)
+        if qp is None:
+            return
+        if qp.isVisible():
+            qp.hide()
+        else:
+            self._refresh_queue_panel()
+            qp.show()
+            self._layout_queue_panel()
+        if hasattr(self, "player_bar"):
+            self.player_bar.queue_btn.setChecked(qp.isVisible())
+
+    def _refresh_queue_panel(self):
+        qp = getattr(self, "queue_panel", None)
+        if qp is not None and qp.isVisible():
+            qp.refresh()
+
+    def _layout_queue_panel(self):
+        qp = getattr(self, "queue_panel", None)
+        if qp is None:
+            return
+        try:
+            qp.adjustSize()
+            qp.move(max(0, self.width() - qp.width()), 130)
+        except Exception:
+            pass
 
     def _on_download_completed(self, path, job):
         """Library integration: the downloaded file joins the EXISTING
         local library exactly once (no duplicate indexing), becomes
         searchable/offline-playable and shows on Home."""
         try:
-            self.download_manager.record_completed(job)
             path = str(path)
             if path not in self.library:
                 self.library.append(path)
                 try:
                     title, artist = extract_title_artist(path)
                     self._tag_cache[path] = (title, artist)
+                    self._album_cache[path] = extract_album(path)
                 except Exception:
                     pass
                 self._rebuild_library_list()
                 self._update_count_label()
+            # the manager recorded the history itself (record_completed is
+            # inside its file_added chain) — this sync mirrors it to the
+            # legacy config key + page UI
             self.downloads_history = self.download_manager.history()
             self.downloads_page.set_completed(self.downloads_history)
             self._refresh_home()
@@ -4743,13 +4994,32 @@ class MainWindow(QMainWindow):
         self.search_edit.setText(artist)
         self._on_search_changed(artist)
 
+    def _home_add_to_playlist(self, item):
+        """'Add to Playlist' on the SELECTED item — actually adds the
+        selected track (v3.0 opened the generic playlist manager and added
+        nothing)."""
+        from playlist_dialog import add_track_to_playlist_dialog
+        if item.paths:
+            add_track_to_playlist_dialog(self, item.paths[0])
+
+    def _home_open_album(self, item):
+        """'Open Album' on the SELECTED album — opens THAT album (its
+        tracks, in order, in the library view), exactly like double-clicking
+        the album in the Albums grid (v3.0 navigated to the generic albums
+        page ignoring the selection)."""
+        tracks = [p for p in item.paths if os.path.exists(p)]
+        if tracks:
+            self._play_from_list(tracks, 0, view=View.LIBRARY)
+
     def _home_track_info(self, item):
         if item.paths:
             self._show_track_properties(item.paths[0])
 
     def _home_see_all(self, key):
+        # v3.1: "artists" was a silent no-op before (mapping lacked it)
         target = {"albums": "albums", "favorites": "favorites",
-                  "playlists": "playlists"}.get(key)
+                  "playlists": "playlists",
+                  "artists": "library"}.get(key)
         if target:
             self._on_rail_clicked(target)
 
@@ -4762,7 +5032,7 @@ class MainWindow(QMainWindow):
                 cached = self._tag_cache.get(p)
                 if isinstance(cached, (tuple, list)) and len(cached) >= 2:
                     tags[p] = {"title": cached[0], "artist": cached[1],
-                               "album": ""}
+                               "album": self._album_cache.get(p, "")}
             recently_added = sorted(
                 lib, key=lambda p: os.path.getmtime(p), reverse=True)[:10]
             downloads = [r.get("dest_path") or "" for r in
@@ -4813,15 +5083,11 @@ class MainWindow(QMainWindow):
     def _on_track_finished(self):
         """Called when a track finishes naturally."""
         self._finalize_listen_credit()
-        # Mixed local/online queue: a finished ONLINE track first drains the
-        # online queue; when it runs empty playback falls back to the local
-        # playlist logic below.
-        if getattr(self, "current_online", None) is not None:
-            if self.online_queue:
-                nxt = self.online_queue.pop(0)
-                self._play_online_track(nxt)
-                return
-            self.current_online = None
+        # Unified queue: whatever played (local or online), advancement is
+        # the SAME decision — _on_next walks current_playlist, whose entries
+        # may be paths or OnlineTracks. (v3.0 kept a separate online_queue
+        # here that only drained after an online track finished, so an
+        # online 'Play next' never fired during local playback.)
         self._on_next()
 
     def _finalize_listen_credit(self):
@@ -4949,6 +5215,9 @@ class MainWindow(QMainWindow):
         b = getattr(self, "_update_banner", None)
         if b is not None:
             b.reposition_if_visible()
+        if getattr(self, "queue_panel", None) is not None and \
+                self.queue_panel.isVisible():
+            self._layout_queue_panel()
 
     # ------------------------------------------------------------------
     # In-app auto-update (engine in updater.py; UI in update_dialog.py)
@@ -5324,12 +5593,21 @@ class MainWindow(QMainWindow):
             self.player_bar.ab_btn.setChecked(False)
             self.player_bar.ab_btn.setToolTip("A-B Repeat")
 
-    def _play_path_from_playlist(self, path):
-        """Play `path` via the playlist when present, or directly (history
-        entry may have been removed from the current list)."""
+    def _play_path_from_playlist(self, entry):
+        """Play `entry` (path str or OnlineTrack) via the playlist when
+        present, or directly (history entry may have been removed from the
+        current list)."""
         try:
-            idx = self.current_playlist.index(path)
+            idx = self.current_playlist.index(entry)
         except ValueError:
+            if isinstance(entry, online_mod.OnlineTrack):
+                # Online entry no longer in the active list — stream it
+                # standalone so history navigation never dies after edits.
+                self._err_skip_count = 0
+                self._finalize_listen_credit()
+                self._play_online_track(entry)
+                return
+            path = entry
             # Track no longer in the active playlist — play it standalone so
             # history navigation never dies after library edits.
             # Mirror _load_and_play_current's per-track resets so the
@@ -5388,9 +5666,12 @@ class MainWindow(QMainWindow):
         # A successful manual/auto advance means the previous error is over —
         # reset the consecutive-error counter (used by _on_audio_error).
         self._err_skip_count = 0
-        if self.repeat_mode == RepeatMode.ONE and self.current_track:
+        if self.repeat_mode == RepeatMode.ONE and \
+                (self.current_track or self.current_online):
             # Repeat-one restart is a fresh listen of the same track: credit
             # the finished pass under the 70% rule, then reset the meter.
+            # (v3.1: also covers ONLINE tracks — v3.0 checked current_track
+            # only, so repeat-one silently no-op'd on streams.)
             self._finalize_listen_credit()
             self._listened_ms = 0
             self.audio.set_position(0)
@@ -5860,6 +6141,33 @@ class MainWindow(QMainWindow):
                 lp._loader.cancel()
                 if lp._loader.isRunning():
                     lp._loader.wait(1000)
+            # ---- v3.1: complete coordinated shutdown -------------------
+            # Stop accepting new work, then cancel/join EVERY background
+            # worker the window owns. v3.0 stopped at the list above and
+            # left stream resolvers, artwork fetchers, the update probe and
+            # — worst — the long-lived DownloadWorker running while the app
+            # tore down (QThread destroyed mid-run, corrupted .part files).
+            for attr in ("_resolve_worker", "_download_resolve_worker"):
+                w = getattr(self, attr, None)
+                if w is not None and w.isRunning():
+                    w.cancel()
+                    w.wait(1500)
+            art = getattr(self, "_online_art_worker", None)
+            if art is not None and art.isRunning():
+                art.wait(1000)          # one-shot; bounded by HTTP timeout
+            upd = getattr(self, "_update_worker", None)
+            if upd is not None and upd.isRunning():
+                upd.cancel()
+                upd.wait(1500)
+            sp = getattr(self, "search_page", None)
+            if sp is not None:
+                sp.cancel_search()      # flag-only; zombie list drains itself
+            self._shutdown_v3_workers()   # cover loader + download worker
+            # Release media resources so no backend holds the audio device
+            try:
+                self.audio.stop()
+            except Exception:
+                pass
             if self.mini_player is not None:
                 self.mini_player.close()
             e.accept()
@@ -5957,6 +6265,9 @@ class MainWindow(QMainWindow):
             "download_folder": str(getattr(self, "download_folder", "") or ""),
             "downloads_history": list(getattr(self, "downloads_history", []))[:200],
             "online_enabled": bool(getattr(self, "online_enabled", True)),
+            "lyrics_font_scale": float(getattr(self, "lyrics_font_scale", 1.0) or 1.0),
+            "lyrics_offset_ms": int(getattr(self, "lyrics_offset_ms", 0) or 0),
+            "proxy_url": str(getattr(self, "proxy_url", "") or ""),
             "library": lib,
             "favorites": favs,
             "added_folders": folders,
@@ -6032,6 +6343,17 @@ class MainWindow(QMainWindow):
                                   cfg.get("downloads_history", [])
                                   if isinstance(r, dict)][:200]
         self.online_enabled = bool(cfg.get("online_enabled", True))
+        # v3.1 settings completion: lyrics font scale / timing offset /
+        # custom proxy (validated — bad values fall back to defaults)
+        self.lyrics_font_scale = self._validated_float(
+            cfg.get("lyrics_font_scale", 1.0), 1.0, 0.85, 1.3)
+        try:
+            self.lyrics_offset_ms = int(cfg.get("lyrics_offset_ms", 0) or 0)
+        except (TypeError, ValueError):
+            self.lyrics_offset_ms = 0
+        self.lyrics_offset_ms = max(-5000, min(5000, self.lyrics_offset_ms))
+        self.proxy_url = str(cfg.get("proxy_url", "") or "")[:200]
+        self._apply_proxy_setting()
         self.theme_name = cfg.get("theme", "royal_gold")
         self.library = cfg.get("library", [])
         self.favorites = set(cfg.get("favorites", []))
@@ -6134,6 +6456,15 @@ class MainWindow(QMainWindow):
         return max(lo, min(hi, v))
 
     @staticmethod
+    def _validated_float(value, default: float, lo: float, hi: float) -> float:
+        """Coerce a config value to a float in [lo, hi]; default on junk."""
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return default
+        return max(lo, min(hi, v))
+
+    @staticmethod
     def _validated_enum(enum_cls, value, default):
         """Coerce a config value to an enum member; default on any junk."""
         try:
@@ -6171,6 +6502,14 @@ class MainWindow(QMainWindow):
                                   cfg.get("downloads_history", [])
                                   if isinstance(r, dict)][:200]
         self.online_enabled = bool(cfg.get("online_enabled", True))
+        # v3.1 settings completion (async boot path — keep in sync with
+        # _load_config): lyrics font scale / timing offset / custom proxy
+        self.lyrics_font_scale = self._validated_float(
+            cfg.get("lyrics_font_scale", 1.0), 1.0, 0.85, 1.3)
+        self.lyrics_offset_ms = self._validated_int(
+            cfg.get("lyrics_offset_ms", 0), 0, -5000, 5000)
+        self.proxy_url = str(cfg.get("proxy_url", "") or "")[:200]
+        self._apply_proxy_setting()
         # keep the legacy theme name in sync for rollback compatibility
         self.theme_name = Theme.normalize(cfg.get("theme", Theme.DEFAULT_NAME))
         if self.theme_name not in Theme.names():

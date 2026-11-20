@@ -34,14 +34,18 @@ RESULT_ROLE = Qt.ItemDataRole.UserRole + 1
 # ---------------------------------------------------------------------------
 
 class OnlineSearchWorker(QThread):
-    """Runs a provider search off-thread; cancelled workers emit nothing."""
+    """Runs a provider search off-thread. Carries its generation so a
+    stale worker's results can be rejected at delivery time; cancelled
+    workers emit nothing."""
     results_ready = pyqtSignal(list)
     error_occurred = pyqtSignal(str)
 
-    def __init__(self, provider, query: str, parent=None):
+    def __init__(self, provider, query: str, generation: int = 0,
+                 parent=None):
         super().__init__(parent)
         self.provider = provider
         self.query = query
+        self.generation = int(generation)
         self._cancelled = False
 
     def cancel(self):
@@ -103,6 +107,8 @@ class SearchPage(QWidget):
             "internetarchive")
         self.history: list = []
         self._worker = None
+        self._zombies: list = []        # cancelled workers, kept alive until finished
+        self._search_generation = 0     # request-id guard against stale results
         self._resolve_worker = None
         self._cache = online_mod.SearchCache()
 
@@ -207,6 +213,17 @@ class SearchPage(QWidget):
         self.history = online_mod.sanitize_history(history)
         self._render_suggestions(self.field.text())
 
+    def cancel_search(self):
+        """Shutdown hook: cancel the in-flight search (stale emissions are
+        suppressed by the worker's own flag)."""
+        if self._worker is not None:
+            self._worker.cancel()
+        for w in list(self._zombies):
+            try:
+                w.cancel()
+            except Exception:
+                pass
+
     # ------------------------------------------------------------------
     def _on_text(self, text: str):
         self._render_suggestions(text)
@@ -228,25 +245,56 @@ class SearchPage(QWidget):
         self.field.setText(query)
         self._run_search(query)
 
+    def _retire_worker(self, w):
+        """Cancel a superseded worker and keep a Python reference until its
+        thread finishes (a running QThread must not be garbage-collected)."""
+        if w is None:
+            return
+        try:
+            w.cancel()
+        except Exception:
+            pass
+        self._zombies.append(w)
+        w.finished.connect(self._on_zombie_finished)
+
+    def _on_zombie_finished(self):
+        w = self.sender()
+        if w is not None and w in self._zombies:
+            self._zombies.remove(w)
+        if w is not None:
+            w.deleteLater()
+
     def _run_search(self, query: str):
         cached = self._cache.get(query, self.provider.name)
         if cached is not None:
             self._show_results(cached)
             self.search_triggered.emit(query)
             return
-        if self._worker is not None:
-            self._worker.cancel()
-            self._worker.wait(1500)
+        # Supersede any in-flight search WITHOUT blocking the GUI thread
+        # (v3.0.0 waited up to 1.5 s here). The cancelled worker checks its
+        # flag before emitting, and _on_results rejects anything stale.
+        self._retire_worker(self._worker)
+        self._search_generation += 1
+        gen = self._search_generation
         self.status.setText(f"Searching “{query}” …")
         self.results.clear()
-        self._worker = OnlineSearchWorker(self.provider, query)
-        self._worker.results_ready.connect(self._on_results)
-        self._worker.error_occurred.connect(self._on_error)
-        self._worker.start()
+        w = OnlineSearchWorker(self.provider, query, generation=gen)
+        self._worker = w
+        w.results_ready.connect(
+            lambda tracks, w=w: self._on_results(tracks, w))
+        w.error_occurred.connect(
+            lambda msg, w=w: self._on_error(msg, w))
+        w.start()
         self.search_triggered.emit(query)
 
-    def _on_results(self, tracks: list):
-        self._cache.put(self.field.text().strip(), self.provider.name, tracks)
+    def _on_results(self, tracks: list, worker):
+        # Stale-result rejection: only the CURRENT generation's worker may
+        # render — and cache under the WORKER's query (v3.0.0 cached under
+        # the live field text, polluting the cache with wrong-key results).
+        if worker is not self._worker or \
+                worker.generation != self._search_generation:
+            return
+        self._cache.put(worker.query, self.provider.name, tracks)
         self._show_results(tracks)
 
     def _show_results(self, tracks: list):
@@ -265,7 +313,11 @@ class SearchPage(QWidget):
             it.setData(RESULT_ROLE, t)
             self.results.addItem(it)
 
-    def _on_error(self, msg: str):
+    def _on_error(self, msg: str, worker=None):
+        if worker is not None and \
+                (worker is not self._worker or
+                 worker.generation != self._search_generation):
+            return          # stale error from a superseded search
         self.status.setText(f"Search failed: {msg}")
         self.results.clear()
 
@@ -289,7 +341,14 @@ class SearchPage(QWidget):
         m.addAction("Play (stream)", lambda: self.play_track_requested.emit(t))
         m.addAction("Play next", lambda: self.play_next_requested.emit(t))
         m.addAction("Add to queue", lambda: self.add_queue_requested.emit(t))
-        if getattr(t, "downloads_allowed", False) and \
-                getattr(self.provider, "supports_download", False):
-            m.addAction("Download", lambda: self.download_track_requested.emit(t))
+        # Download eligibility is item-specific and established at resolve
+        # time (online.py assesses the source's own access metadata); the
+        # action stays available and the manager refuses restricted items
+        # with a clear message (v3.0.0 hard-marked everything downloadable).
+        if getattr(self.provider, "supports_download", False):
+            if getattr(t, "downloads_allowed", None) is False:
+                m.addAction("Download (restricted on source)",
+                            lambda: self.download_track_requested.emit(t))
+            else:
+                m.addAction("Download", lambda: self.download_track_requested.emit(t))
         m.exec(self.results.mapToGlobal(pos))

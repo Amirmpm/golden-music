@@ -1,5 +1,96 @@
 # Changelog
 
+## [3.1.0] - 2026-11-20
+
+### Complete engineering remediation
+
+**Download manager — rebuilt**
+- **Windows disk-space validation** (`free_bytes` now uses
+  `shutil.disk_usage`; the previous `os.statvfs` call is POSIX-only and
+  raised an uncaught `AttributeError` on Windows, breaking downloads on
+  the primary platform)
+- **Active-job cancellation redesigned**: cancelling a running download
+  signals the worker, which closes its handle and removes the `.part`
+  itself — the old code unlinked the file while the worker held it open
+  (PermissionError on Windows, silent corruption elsewhere) and never set
+  the cancel flag
+- **Persistent job registry**: every job stays addressable by id until
+  removed/cleared, so `retry()` can find FAILED jobs (v3.0 dropped them
+  from the queue — retry was a silent no-op)
+- **History + queue persistence**: atomic `downloads_state.json`
+  (schema-validated, corrupt entries quarantined) — the v3.0 bug where
+  the first completion after restart wiped the persisted history is gone
+  (the manager owns the history; config-key migration on first boot)
+- **Restart recovery**: unfinished jobs are restored QUEUED and resume
+  from their `.part` via HTTP Range; servers that ignore Range restart
+  cleanly; `.part` files larger than a known total are dropped as corrupt
+- **In-flight duplicate-URL prevention**, `remove` / `clear finished`
+  actions, in-place Downloads-page row updates (no more full rebuild
+  twice a second per running job)
+
+**Unified playback queue**
+- ONE queue: `current_playlist` entries are local paths OR online
+  tracks — Next / Previous / Play next / repeat-one / shuffle behave
+  identically over both (v3.0 kept a separate `online_queue` that only
+  drained after an online track finished, so an online "Play next" could
+  never actually play next during local playback)
+- Online queue entries persist across restarts; history/redo and
+  smart-shuffle now bookkeep online tracks too
+- **"Up Next" queue drawer** wired into the player bar (the previously
+  dead `queue_panel.py` module) — one shared queue on every surface
+
+**Online correctness**
+- **Item-specific download eligibility** read from the Internet
+  Archive's own access metadata at resolve time (`access-restricted-item`,
+  dark items, private files) — search results start UNKNOWN instead of the
+  v3.0 blanket `downloads_allowed=True`; restricted items refuse with a
+  clear message
+- **Stream-resolution races fixed** with worker generations: a stale
+  resolve can no longer hijack a newer selection (last-arrival-wins)
+- **Search races fixed**: request generations at delivery, stale results
+  dropped, results cached under the WORKER's query (v3.0 cached under the
+  live field text — wrong-key cache pollution), and the 1.5 s GUI-thread
+  block while superseding a search is gone
+- **Online artwork token guard**: a late artwork response for an old
+  track can no longer overwrite the newer track's art (or the theme
+  accent)
+- **Custom HTTP(S) proxy** setting (Settings → Online), applied to
+  search/stream/artwork/downloads; validated, refused loudly when invalid
+
+**Home page**
+- Album-aware cards: real album tags (background tag loader now extracts
+  them), distinct album groups (was a single "Unknown album" blob)
+- "Add to Playlist" acts on the selected track (opened a generic dialog
+  and added nothing before); "Open Album" opens THAT album
+- "See all artists" navigates (was a silent no-op)
+- **Async cover loading**: artwork reads + decodes off the GUI thread
+  (bounded, deduplicated, cancellable QImage pipeline; v3.0 froze the UI
+  with ~70 synchronous mutagen reads per rebuild) + single-scale instead
+  of double-scaling
+
+**Settings completion (Nuvx parity)**
+- Lyrics text size (85–130%) and timing offset (±5 s) — persisted,
+  validated, applied live to both lyrics surfaces
+- Dedicated keyboard-shortcuts page (live keymap documentation)
+- Seven-band equalizer remains a documented technical blocker (Qt
+  Multimedia exposes no per-band DSP; see NUVX_SETTINGS_PARITY item 23)
+
+**Shutdown / thread safety**
+- Coordinated, bounded shutdown of EVERY background worker: download
+  worker (persist → cancel active transfer → join), stream resolvers,
+  artwork fetcher, update probe, home cover loader, search workers —
+  registered via closeEvent AND atexit (tests/diagnostic paths), fixing
+  interpreter aborts at teardown
+- `UpdateCheckWorker` gained a real cancel; `SearchPage` a shutdown hook
+
+**Verification** — new `scripts/test_v31_regression.py` (62 checks: real
+HTTP pause/cancel/recovery with Range semantics, registry retry,
+eligibility, unified-queue state machine, race guards, async covers,
+shutdown) riding `test_features` in CI (workflow list unchanged — token
+scope); all 13 existing suites green.
+
+## [3.0.0] - 2026-11-19
+
 ## [3.0.0] - 2026-11-19
 
 ### The Nuvx Desktop transformation
@@ -527,6 +618,6 @@ The first stable, production-ready version of Golden Music!
 
 <div align="center">
 
-**Golden Music v3.0.0** — Nuvx Desktop Shell · Liquid Glass · Online Music · Downloads · Windows Integration 🪟
+**Golden Music v3.1.0** — Remediation Release · Unified Queue · Download Manager Rebuild · Windows-Safe · Verified 🪟
 
 </div>

@@ -1,3 +1,45 @@
+# AUDIT_REPORT.md — Golden Music
+
+> v3.1.0 remediation audit (2026-11-20). The v3.0.0 audit below is kept for
+> history; its findings were independently re-verified against commit 16e6bf8
+> and every Critical/High defect is now FIXED with regression coverage
+> (BUG_TRACKER.md holds the finding-by-finding matrix with file:line evidence;
+> TEST_RESULTS.md holds the run evidence).
+
+## v3.1 audit summary
+
+Audit scope: full re-inspection of downloads.py, online.py, main.pyw (queue,
+shutdown, race paths), search_page.py, home_page.py, coverart.py,
+downloads_page.py, queue_panel.py, settings_dialog.py, lyrics_panel.py,
+fullscreen_player.py, update_dialog.py, config.py + all test scripts.
+
+Findings (21 total: 6 Critical, 9 High, 6 Medium) — all reproduced from code
+evidence before fixing; see BUG_TRACKER.md for the full matrix:
+
+| Severity | Count | Fixed | Blocked (documented) |
+|---------|------|-------|-----------------------|
+| Critical | 6 (DM-01/02/03/06, Q-01, plus DM-05 crash class) | 6 | 0 |
+| High | 9 (DM-04/05, ON-01/02/03/04, UI-01/02/03) | 9 | 0 |
+| Medium | 6 (ON-05, UI-04, ST-01/02, TH-01, CI-01) | 4 | 2 (EQ: no DSP chain in Qt Multimedia; CI expansion: token workflow-scope) |
+
+Notable root causes (full detail in BUG_TRACKER.md):
+- DM-01: `os.statvfs` is POSIX-only → uncaught AttributeError on Windows.
+- DM-02: `cancel()` scanned the runnable queue first; a RUNNING job stays
+  in the queue until a terminal state, so the active job was marked
+  CANCELLED and its `.part` unlinked while the worker still held the file
+  open (PermissionError on Windows) — the worker's cancel flag was never
+  set.
+- DM-03: `_run_job` drops FAILED jobs from the queue; `retry()` searched
+  only the queue → dead code path.
+- Q-01: two disjoint queues (`current_playlist` of paths vs `online_queue`
+  of OnlineTrack) with a single asymmetric drain point.
+- ON-02/03: no request generations — last-arrival-wins races.
+
+Verification: `scripts/test_v31_regression.py` (62 checks) + the 13
+existing suites — all green (TEST_RESULTS.md).
+
+---
+
 # Golden Music — Technical Audit Report (v2.2.0 → v3.0.0 remediation)
 
 **Audited baseline:** `a47bad9` (v2.2.0, main) — audited by source inspection + execution in an offscreen Qt environment; every finding below was reproduced from source or by test before being accepted. No finding was invented to fill a category.

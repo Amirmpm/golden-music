@@ -20,8 +20,9 @@ from __future__ import annotations
 
 from collections import OrderedDict
 
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QPoint
-from PyQt6.QtGui import QPixmap, QPainter, QColor, QPainterPath
+from PyQt6.QtCore import (Qt, pyqtSignal, QSize, QPoint, QThread, QMutex,
+                          QWaitCondition)
+from PyQt6.QtGui import QPixmap, QImage, QPainter, QColor, QPainterPath
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                               QPushButton, QFrame, QScrollArea, QSizePolicy,
                               QMenu)
@@ -31,6 +32,92 @@ import coverart
 TILE = 168          # square tile px (>= Nuvx minimum 144)
 GAP = 20
 CARD_RADIUS = 8
+
+
+# ---------------------------------------------------------------------------
+# Async cover loader (bounded, off the GUI thread)
+# ---------------------------------------------------------------------------
+
+class HomeCoverLoader(QThread):
+    """Bounded cover-art worker for Home cards.
+
+    Disk access (mutagen reads) AND image decoding run here — QImage is
+    safe to build off the GUI thread (QPixmap is NOT); the GUI-side slot
+    only wraps the finished QImage. v3.0 ran up to ~70 sequential reads +
+    decodes synchronously inside one rebuild, freezing the UI on a cold
+    cache. Deduplicates requests; a rebuild cancels pending ones.
+    """
+
+    covers_ready = pyqtSignal(list)              # [(path, QImage)]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._queue: list = []
+        self._queued = set()
+        self._mutex = QMutex()
+        self._wake = QWaitCondition()
+        self._running = True
+
+    def request(self, path: str, size: int = TILE):
+        if not path:
+            return
+        self._mutex.lock()
+        try:
+            if path not in self._queued:
+                self._queued.add(path)
+                self._queue.append((path, size))
+                self._wake.wakeAll()
+        finally:
+            self._mutex.unlock()
+
+    def cancel_all(self):
+        """Drop pending requests (page rebuild — old cards are gone)."""
+        self._mutex.lock()
+        try:
+            self._queue.clear()
+            self._queued.clear()
+        finally:
+            self._mutex.unlock()
+
+    def stop_and_join(self):
+        self._mutex.lock()
+        try:
+            self._running = False
+            self._wake.wakeAll()
+        finally:
+            self._mutex.unlock()
+        self.wait(3000)
+
+    def run(self):
+        while True:
+            item = None
+            self._mutex.lock()
+            try:
+                while self._running and not self._queue:
+                    self._wake.wait(self._mutex, 500)
+                if not self._running:
+                    return
+                if self._queue:
+                    item = self._queue.pop(0)
+            finally:
+                self._mutex.unlock()
+            if item is None:
+                continue
+            path, size = item
+            try:
+                data = coverart.get_cover_bytes(path)
+            except Exception:
+                data = None
+            if not data:
+                continue
+            img = QImage()
+            if not img.loadFromData(data):
+                continue
+            img = img.scaled(
+                size, size,
+                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                Qt.TransformationMode.SmoothTransformation)
+            self.covers_ready.emit([(path, img)])
 
 
 # ---------------------------------------------------------------------------
@@ -80,10 +167,11 @@ class Card(QFrame):
     activated = pyqtSignal(object)            # HomeItem
     context_requested = pyqtSignal(object, QPoint)
 
-    def __init__(self, item: HomeItem, theme: dict, parent=None):
+    def __init__(self, item: HomeItem, theme: dict, parent=None, page=None):
         super().__init__(parent)
         self.item = item
         self.theme = dict(theme or {})
+        self.page = page              # HomePage back-ref for async covers
         self.setFixedSize(TILE, TILE + 46)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         lay = QVBoxLayout(self)
@@ -114,24 +202,32 @@ class Card(QFrame):
         self._load_cover()
 
     def _load_cover(self):
-        pm = None
-        try:
-            cp = self.item.cover_path
-            if cp:
-                pm = coverart.get_cover_pixmap(cp, 192) or None
-        except Exception:
-            pm = None
-        self.set_cover(pm)
+        """Immediate placeholder, then async fill: NO disk I/O on the GUI
+        thread (v3.0 did a synchronous mutagen read + decode per card)."""
+        cp = self.item.cover_path
+        if cp and self.page is not None:
+            cached = self.page.cached_cover(cp)
+            if cached is not None:
+                self.set_cover(cached)
+                return
+            self.set_cover(None)          # placeholder right now
+            self.page.request_cover(self, cp)
+            return
+        self.set_cover(None)
 
     def set_cover(self, pm: QPixmap | None):
         if pm is None or pm.isNull():
             self.cover.setText("♪")
             self.cover.setStyleSheet("font-size: 42px;")
         else:
-            self.cover.setPixmap(pm.scaled(
-                TILE, TILE,
-                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                Qt.TransformationMode.SmoothTransformation))
+            # single scale: the async loader already delivers TILE-sized
+            # images (v3.0 scaled 192 then 168 — two resamples per card)
+            if pm.width() != TILE or pm.height() != TILE:
+                pm = pm.scaled(
+                    TILE, TILE,
+                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                    Qt.TransformationMode.SmoothTransformation)
+            self.cover.setPixmap(pm)
         self._style()
 
     def set_theme(self, theme: dict):
@@ -304,6 +400,7 @@ class HomePage(QWidget):
     see_all_requested = pyqtSignal(str)            # 'albums'|'artists'|...
 
     MAX_CARDS = 10
+    _COVER_CACHE_MAX = 120
 
     def __init__(self, theme: dict, parent=None):
         super().__init__(parent)
@@ -313,6 +410,12 @@ class HomePage(QWidget):
             "recently_added": [], "favorites": set(),
             "playlists": {}, "recently_downloaded": [],
         }
+        # async covers: bounded loader + per-path request map + pixmap cache
+        self._cover_loader = HomeCoverLoader(self)
+        self._cover_loader.covers_ready.connect(self._on_covers_ready)
+        self._cover_requests: dict = {}    # path -> [Card]
+        self._pm_cache: "OrderedDict[str, QPixmap]" = OrderedDict()
+        self._cover_loader.start()
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 8, 0)
         lay.setSpacing(18)
@@ -398,6 +501,8 @@ class HomePage(QWidget):
 
     def _rebuild(self):
         # clear body
+        self._cover_loader.cancel_all()      # old cards are gone
+        self._cover_requests.clear()
         while self.body_lay.count() > 1:
             item = self.body_lay.takeAt(0)
             w = item.widget()
@@ -417,7 +522,7 @@ class HomePage(QWidget):
             sh = Shelf(strap, header, self.theme, see_all)
             sh.see_all_requested.connect(self.see_all_requested.emit)
             for it in items[: self.MAX_CARDS]:
-                card = Card(it, self.theme)
+                card = Card(it, self.theme, page=self)
                 card.activated.connect(self._on_card)
                 card.context_requested.connect(self._on_card_menu)
                 sh.add_card(card)
@@ -493,6 +598,41 @@ class HomePage(QWidget):
                                 + ("s" if len(paths) != 1 else ""),
                                 paths, paths[0] if paths else None))
         return out
+
+    # ------------------------------------------------------------------
+    # Async cover plumbing (GUI-thread side)
+    # ------------------------------------------------------------------
+    def cached_cover(self, path: str):
+        """Already-decoded TILE pixmap or None — zero I/O."""
+        pm = self._pm_cache.get(path)
+        if pm is not None:
+            self._pm_cache.move_to_end(path)   # LRU touch
+        return pm
+
+    def request_cover(self, card, path: str):
+        """Register a card for async fill (deduplicated per path)."""
+        self._cover_requests.setdefault(path, []).append(card)
+        self._cover_loader.request(path, TILE)
+
+    def _on_covers_ready(self, batch):
+        """GUI thread: wrap finished QImages as pixmaps and deliver."""
+        for path, img in batch:
+            pm = QPixmap.fromImage(img)
+            self._pm_cache[path] = pm
+            while len(self._pm_cache) > self._COVER_CACHE_MAX:
+                self._pm_cache.popitem(last=False)
+            for card in self._cover_requests.pop(path, []):
+                try:
+                    card.set_cover(pm)
+                except RuntimeError:
+                    pass          # card's C++ object already deleted
+
+    def shutdown(self):
+        """Coordinated shutdown (called from MainWindow.closeEvent)."""
+        try:
+            self._cover_loader.stop_and_join()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     def _on_card(self, item: HomeItem):

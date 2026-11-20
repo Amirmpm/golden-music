@@ -254,4 +254,22 @@ if errors:
     for n, tb in errors:
         print(f"\n--- {n} ---\n{tb}")
     sys.exit(1)
+
+# v3.1 remediation regression suite (runs under the same CI entry — the
+# workflow script list cannot be changed without a workflow-scoped token,
+# so the download-manager / unified-queue / race-guard regressions ride
+# this already-listed suite).
+print("\n=== v3.1 remediation regressions ===")
+import subprocess
+from pathlib import Path as _P
+_here = _P(__file__).resolve().parent
+_v31 = _here / "test_v31_regression.py"
+_r = subprocess.run([sys.executable, str(_v31)],
+                    cwd=str(_here.parent),
+                    env={**os.environ,
+                         "QT_QPA_PLATFORM": os.environ.get(
+                             "QT_QPA_PLATFORM", "offscreen")})
+check("v31_remediation_suite", _r.returncode == 0)
+if _r.returncode != 0:
+    sys.exit(1)
 print("ALL FEATURE TESTS PASSED!")

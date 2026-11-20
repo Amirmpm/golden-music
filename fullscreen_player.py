@@ -584,10 +584,15 @@ class FullscreenPlayer(QWidget):
         self._line_labels = []
 
     def sync_lyrics(self, pos_ms: int):
-        """Highlight + center the active synced line."""
+        """Highlight + center the active synced line.
+
+        v3.1: the persisted lyrics timing offset applies here (positive
+        shows lines earlier — use when lyrics lag the music)."""
         ly = self._lyrics
         if not ly or not ly.synced or not self._line_labels:
             return
+        mw = self.main_window
+        pos_ms = mw._lyrics_effective_ms(pos_ms)
         try:
             idx = ly.line_for_time(pos_ms)
         except Exception:
@@ -598,14 +603,14 @@ class FullscreenPlayer(QWidget):
         if 0 <= self._active_line < len(self._line_labels):
             try:
                 self._line_labels[self._active_line].setStyleSheet(
-                    f"color: {t['muted']}; font-size: 15px;"
+                    f"color: {t['muted']}; font-size: {mw._lyrics_px(15)}px;"
                     f"background: transparent;")
             except Exception:
                 pass
         if 0 <= idx < len(self._line_labels):
             try:
                 self._line_labels[idx].setStyleSheet(
-                    f"color: {t['gold_light']}; font-size: 17px;"
+                    f"color: {t['gold_light']}; font-size: {mw._lyrics_px(17)}px;"
                     f"font-weight: 700; background: transparent;")
                 if self._lyrics_scroll is not None:
                     self._lyrics_scroll.ensureWidgetVisible(
@@ -619,12 +624,13 @@ class FullscreenPlayer(QWidget):
         if not self._line_labels or self._lyrics is None:
             return
         t = self.theme
+        mw = self.main_window
         for i, lbl in enumerate(self._line_labels):
             try:
                 active = (i == self._active_line)
                 lbl.setStyleSheet(
                     f"color: {t['gold_light'] if active else t['muted']}; "
-                    f"font-size: {17 if active else 15}px; "
+                    f"font-size: {mw._lyrics_px(17 if active else 15)}px; "
                     f"font-weight: {700 if active else 400};"
                     f"background: transparent;")
             except Exception:
