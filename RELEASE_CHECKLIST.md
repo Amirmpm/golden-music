@@ -12,12 +12,13 @@
 - [x] Status files current (COMPLETION_STATUS, BUG_TRACKER, TEST_RESULTS,
       IMPLEMENTATION_LOG, RELEASE_CHECKLIST)
 - [x] Commit + push feature/v3.1-remediation
-- [ ] Fast-forward main + push
-- [ ] Tag v3.1.0 + push (triggers Release workflow on windows-latest)
-- [ ] Release workflow green (tests → Bandit → PyInstaller → Inno Setup →
-      portable zip → SHA-256 → install/upgrade/uninstall smoke test →
-      GitHub release)
-- [ ] Verify release artifacts published (installer + portable + checksum)
-- [ ] Record final evidence + close out COMPLETION_STATUS.md
+- [x] Fast-forward main + push
+- [x] Tag v3.1.0 + push (triggers Release workflow on windows-latest)
+- [x] Release workflow green — run #11 on 583cf55 (tests → Bandit →
+      PyInstaller → Inno Setup → portable zip → SHA-256 →
+      install/upgrade/uninstall smoke test → GitHub release)
+- [x] Release artifacts verified (installer 30.4 MB, portable 43.8 MB,
+      .sha256) — https://github.com/Amirmpm/golden-music/releases/tag/v3.1.0
+- [x] Final evidence recorded; COMPLETION_STATUS.md closed out
 - [ ] CI expansion patch delivered (workflow-scope-blocked; documented:
       ci-workflow-expansion-v3.1-pending-workflow-scope.patch)
