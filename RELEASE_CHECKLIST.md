@@ -10,15 +10,15 @@
       badge/links, INSTALLATION, CHANGELOG 3.2.0 section, RELEASE_NOTES)
       — version-sync 10/10
 - [x] Commit v3.2.0 on main; annotated tag v3.2.0
-- [ ] Push main + tag v3.2.0 (blocked: sandbox credential loss —
-      needs GitHub PAT or a push from the user's clone)
-- [ ] Release workflow green (windows-latest: tests → Bandit →
-      PyInstaller → Inno Setup → portable zip → SHA-256 → smoke test →
-      GitHub release; then ubuntu-latest: suite → Bandit → tar.gz →
-      SHA-256 → upload into the release)
-- [ ] Release artifacts verified (GoldenMusicSetup-3.2.0.exe + .sha256,
-      GoldenMusic-3.2.0-portable.zip, GoldenMusic-3.2.0-linux-x86_64.tar.gz
-      + .sha256)
+- [x] Push main + tag v3.2.0 (main ec68324..2b885e6, tag pushed with a
+      user-supplied PAT after the sandbox lost its stored credential)
+- [x] Release workflow green — run #12 on 2b885e6 (windows-latest:
+      tests → Bandit → PyInstaller → Inno Setup → portable zip →
+      SHA-256 → smoke test → GitHub release; then ubuntu-latest:
+      suite → Bandit → tar.gz → SHA-256 → upload into the release)
+- [x] Release artifacts verified (installer 30.4 MB + .sha256,
+      portable 43.8 MB, linux tar.gz 86.7 MB + .sha256) —
+      https://github.com/Amirmpm/golden-music/releases/tag/v3.2.0
 
 ## v3.1.0 — remediation release (2026-11-20, closed)
 
